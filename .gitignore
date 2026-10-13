@@ -1,0 +1,10 @@
+/target
+*.exe
+*.pdb
+*.log
+.env
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/

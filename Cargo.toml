@@ -1,0 +1,46 @@
+[package]
+name = "viherd"
+version = "0.1.0"
+edition = "2021"
+description = "Environnement de dev local PHP/Node à la Laravel Herd, écrit en Rust"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "viherd"
+path = "src/main.rs"
+
+[[bin]]
+name = "viherd-app"
+path = "src/app.rs"
+
+[dependencies]
+tao = "0.37"
+tray-icon = "0.26"
+wry = "0.57"
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+mysql_async = { version = "0.37", default-features = false, features = ["minimal"] }
+tokio-postgres = "0.7"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+dirs = "5"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "client", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+mime_guess = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+zip = "2"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

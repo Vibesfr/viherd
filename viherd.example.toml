@@ -1,0 +1,39 @@
+# Configuration viherd du projet (versions ISOLÉES de ce projet)
+php = "8.3"
+node = "22"
+
+# Dossier public (par défaut : public/ s'il existe)
+# root = "public"
+
+# Pour une app 100% Node (Next, Nuxt...) : tout le site est proxifié vers ce port
+# proxy = 3000
+
+# WebSockets Laravel Reverb : ws://monprojet.test/app/... -> Reverb sur 8080
+[[routes]]
+path = "/app"
+port = 8080
+
+[[routes]]
+path = "/apps"
+port = 8080
+
+# Workers supervisés (redémarrage auto, logs dans ~/.viherd/logs)
+[[workers]]
+name = "queue"
+command = "php artisan queue:work --tries=3"
+
+[[workers]]
+name = "schedule"
+command = "php artisan schedule:work"
+
+[[workers]]
+name = "reverb"
+command = "php artisan reverb:start --host=127.0.0.1 --port=8080"
+
+# [[workers]]
+# name = "vite"
+# command = "npm run dev"
+
+# Variables d'environnement ajoutées aux processus du projet
+[env]
+# APP_ENV = "local"
