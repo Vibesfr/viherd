@@ -95,6 +95,7 @@ async fn handle(req: Request<Incoming>, st: Arc<State>, peer: SocketAddr) -> Res
     let Some(site) = site else { return Ok(index_page(&st, &g)) };
 
     let path = req.uri().path().to_string();
+    let method = req.method().to_string();
     let t0 = std::time::Instant::now();
     let (kind, r) = if let Some(r) = site.project.routes.iter().find(|r| path.starts_with(&r.path)) {
         ("route", proxy(req, r.port).await)
@@ -104,7 +105,7 @@ async fn handle(req: Request<Incoming>, st: Arc<State>, peer: SocketAddr) -> Res
         ("php", php_or_static(req, &site, &g, peer, &st).await)
     };
     let status = match &r { Ok(resp) => resp.status().as_u16(), Err(_) => 502 };
-    st.metrics.record(&site.name, kind, status, t0.elapsed());
+    st.metrics.record(&site.name, kind, &method, &path, status, t0.elapsed());
     r
 }
 
@@ -120,17 +121,35 @@ pub struct SiteMetrics {
     pub last_kind: String,
     pub last_ms: u128,
     pub last_at: u64,
+    /// Dernière page demandée (les fichiers statiques comme /build/app.js sont ignorés)
+    pub last_method: String,
+    pub last_path: String,
+    /// Dernière réponse 5xx : chemin, statut et horodatage
+    pub last_err_path: String,
+    pub last_err_status: u16,
+    pub last_err_at: u64,
     /// Horodatages (secondes) des 60 dernières requêtes, pour une sparkline
     pub recent: Vec<u64>,
 }
 
 impl Metrics {
-    pub fn record(&self, site: &str, kind: &str, status: u16, took: std::time::Duration) {
+    pub fn record(&self, site: &str, kind: &str, method: &str, path: &str, status: u16, took: std::time::Duration) {
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let mut m = self.0.lock().unwrap();
         let e = m.entry(site.to_string()).or_default();
         e.requests += 1;
-        if status >= 500 { e.errors += 1; }
+        let path: String = path.chars().take(200).collect();
+        if status >= 500 {
+            e.errors += 1;
+            e.last_err_path = format!("{method} {path}");
+            e.last_err_status = status;
+            e.last_err_at = now;
+        }
+        let asset = path.rsplit('/').next().is_some_and(|f| f.contains('.') && !f.ends_with(".php"));
+        if !asset || e.last_path.is_empty() || status >= 500 {
+            e.last_method = method.to_string();
+            e.last_path = path;
+        }
         e.last_status = status;
         e.last_kind = kind.into();
         e.last_ms = took.as_millis();
