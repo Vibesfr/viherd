@@ -35,6 +35,8 @@ pub struct State {
     pub paused: std::sync::Mutex<std::collections::HashSet<String>>,
     /// Demande d'arrêt propre venue de l'API (bouton Quitter, script dev.ps1)
     pub quit: tokio::sync::Notify,
+    /// Partages publics en cours : hôte du tunnel (xxx.trycloudflare.com) -> site
+    pub shares: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 pub(crate) fn full(b: impl Into<Bytes>) -> Body {
@@ -58,41 +60,98 @@ fn page(code: u16, title: &str, body: &str) -> Response<Body> {
         .unwrap()
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Mode { Api, Http, Https }
+
 pub async fn serve(addr: SocketAddr, st: Arc<State>, api: bool) -> Result<()> {
     let listener = TcpListener::bind(addr).await.map_err(|e| anyhow!("impossible d'écouter sur {addr}: {e}"))?;
     tracing::info!("{} sur http://{addr}", if api { "API" } else { "Proxy" });
+    let mode = if api { Mode::Api } else { Mode::Http };
     loop {
         let (stream, peer) = listener.accept().await?;
-        let st = st.clone();
+        tokio::spawn(serve_conn(TokioIo::new(stream), st.clone(), peer, mode));
+    }
+}
+
+/// Sites en HTTPS : certificat signé à la volée par l'autorité locale de Viherd.
+pub async fn serve_tls(addr: SocketAddr, st: Arc<State>) -> Result<()> {
+    let listener = TcpListener::bind(addr).await.map_err(|e| anyhow!("impossible d'écouter sur {addr}: {e}"))?;
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(crate::certs::server_config(st.clone())?));
+    tracing::info!("Proxy HTTPS sur https://{addr}");
+    loop {
+        let (stream, peer) = listener.accept().await?;
+        let (st, acceptor) = (st.clone(), acceptor.clone());
         tokio::spawn(async move {
-            let svc = service_fn(move |req| {
-                let st = st.clone();
-                async move {
-                    let r = if api { api_handle(req, st).await } else { handle(req, st, peer).await };
-                    Ok::<_, Infallible>(r.unwrap_or_else(|e| {
-                        tracing::error!("{e:#}");
-                        page(502, "Erreur", &format!("<pre>{}</pre>", html_escape(&format!("{e:#}"))))
-                    }))
-                }
-            });
-            if let Err(e) = http1::Builder::new().serve_connection(TokioIo::new(stream), svc).with_upgrades().await {
-                tracing::debug!("connexion: {e}");
+            match acceptor.accept(stream).await {
+                Ok(tls) => serve_conn(TokioIo::new(tls), st, peer, Mode::Https).await,
+                Err(e) => tracing::debug!("TLS: {e}"),
             }
         });
     }
 }
 
-async fn handle(req: Request<Incoming>, st: Arc<State>, peer: SocketAddr) -> Result<Response<Body>> {
-    let host = req.headers().get(HOST).and_then(|h| h.to_str().ok()).unwrap_or("")
-        .split(':').next().unwrap_or("").to_lowercase();
+async fn serve_conn<I>(io: I, st: Arc<State>, peer: SocketAddr, mode: Mode)
+where
+    I: hyper::rt::Read + hyper::rt::Write + Unpin + Send + 'static,
+{
+    let svc = service_fn(move |req| {
+        let st = st.clone();
+        async move {
+            let r = match mode {
+                Mode::Api => api_handle(req, st).await,
+                _ => handle(req, st, peer, mode == Mode::Https).await,
+            };
+            Ok::<_, Infallible>(r.unwrap_or_else(|e| {
+                tracing::error!("{e:#}");
+                page(502, "Erreur", &format!("<pre>{}</pre>", html_escape(&format!("{e:#}"))))
+            }))
+        }
+    });
+    if let Err(e) = http1::Builder::new().serve_connection(io, svc).with_upgrades().await {
+        tracing::debug!("connexion: {e}");
+    }
+}
+
+/// Le site visé par un nom d'hôte : foo.test, api.foo.test -> foo, ou l'adresse publique d'un partage.
+pub fn site_for_host(st: &State, host: &str, tld: &str) -> Option<Site> {
+    let sites = st.sites.read().unwrap();
+    if let Some(name) = st.shares.lock().unwrap().get(host) {
+        return sites.get(name).cloned();
+    }
+    let name = host.strip_suffix(&format!(".{tld}")).unwrap_or(host);
+    sites.get(name).cloned().or_else(|| name.rsplit('.').next().and_then(|n| sites.get(n).cloned()))
+}
+
+/// Contexte de la requête entrante utile à PHP et aux backends proxifiés.
+pub(crate) struct Ctx {
+    pub https: bool,
+    pub host: String,
+    pub port: u16,
+}
+
+async fn handle(mut req: Request<Incoming>, st: Arc<State>, peer: SocketAddr, tls: bool) -> Result<Response<Body>> {
+    let host_header = req.headers().get(HOST).and_then(|h| h.to_str().ok()).unwrap_or("").to_string();
+    let host = host_header.split(':').next().unwrap_or("").to_lowercase();
     let g = st.global.read().unwrap().clone();
-    let name = host.strip_suffix(&format!(".{}", g.tld)).unwrap_or(&host).to_string();
-    let site = {
-        let sites = st.sites.read().unwrap();
-        // foo.test, et aussi api.foo.test -> foo
-        sites.get(&name).cloned().or_else(|| name.rsplit('.').next().and_then(|n| sites.get(n).cloned()))
+    let Some(site) = site_for_host(&st, &host, &g.tld) else { return Ok(index_page(&st, &g)) };
+    let shared = st.shares.lock().unwrap().contains_key(&host);
+
+    // Site sécurisé appelé en HTTP : redirection temporaire (307 garde la méthode et le corps)
+    if !tls && !shared && g.secured.contains(&site.name) {
+        let port = if g.https_port == 443 { String::new() } else { format!(":{}", g.https_port) };
+        let pq = req.uri().path_and_query().map(|x| x.as_str()).unwrap_or("/");
+        return Ok(Response::builder().status(307).header("Location", format!("https://{host}{port}{pq}")).body(full(""))?);
+    }
+    // Un tunnel de partage arrive en HTTP mais le visiteur est en HTTPS (X-Forwarded-Proto)
+    let forwarded_https = shared && req.headers().get("x-forwarded-proto").is_some_and(|v| v == "https");
+    let ctx = Ctx {
+        https: tls || forwarded_https,
+        host: if shared { host.clone() } else { format!("{}.{}", site.name, g.tld) },
+        port: if tls { g.https_port } else if forwarded_https { 443 } else { g.http_port },
     };
-    let Some(site) = site else { return Ok(index_page(&st, &g)) };
+    if ctx.https && !req.headers().contains_key("x-forwarded-proto") {
+        req.headers_mut().insert("x-forwarded-proto", hyper::header::HeaderValue::from_static("https"));
+    }
 
     let path = req.uri().path().to_string();
     let method = req.method().to_string();
@@ -102,7 +161,7 @@ async fn handle(req: Request<Incoming>, st: Arc<State>, peer: SocketAddr) -> Res
     } else if let Some(port) = site.project.proxy {
         ("proxy", proxy(req, port).await)
     } else {
-        ("php", php_or_static(req, &site, &g, peer, &st).await)
+        ("php", php_or_static(req, &site, &g, peer, &st, &ctx).await)
     };
     let status = match &r { Ok(resp) => resp.status().as_u16(), Err(_) => 502 };
     st.metrics.record(&site.name, kind, &method, &path, status, t0.elapsed());
@@ -192,7 +251,7 @@ pub(crate) fn pct_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-async fn php_or_static(req: Request<Incoming>, site: &Site, g: &Global, peer: SocketAddr, st: &State) -> Result<Response<Body>> {
+async fn php_or_static(req: Request<Incoming>, site: &Site, g: &Global, peer: SocketAddr, st: &State, ctx: &Ctx) -> Result<Response<Body>> {
     let docroot = site.docroot();
     let (parts, body) = req.into_parts();
     let uri_path = pct_decode(parts.uri.path());
@@ -226,9 +285,10 @@ async fn php_or_static(req: Request<Incoming>, site: &Site, g: &Global, peer: So
         ("GATEWAY_INTERFACE".into(), "CGI/1.1".into()),
         ("SERVER_SOFTWARE".into(), "viherd".into()),
         ("SERVER_PROTOCOL".into(), "HTTP/1.1".into()),
-        ("SERVER_NAME".into(), format!("{}.{}", site.name, g.tld)),
+        ("SERVER_NAME".into(), ctx.host.clone()),
         ("SERVER_ADDR".into(), "127.0.0.1".into()),
-        ("SERVER_PORT".into(), g.http_port.to_string()),
+        ("SERVER_PORT".into(), ctx.port.to_string()),
+        ("REQUEST_SCHEME".into(), if ctx.https { "https" } else { "http" }.into()),
         ("REMOTE_ADDR".into(), peer.ip().to_string()),
         ("REMOTE_PORT".into(), peer.port().to_string()),
         ("REQUEST_METHOD".into(), parts.method.to_string()),
@@ -241,6 +301,9 @@ async fn php_or_static(req: Request<Incoming>, site: &Site, g: &Global, peer: So
         ("REDIRECT_STATUS".into(), "200".into()),
         ("CONTENT_LENGTH".into(), body.len().to_string()),
     ];
+    if ctx.https {
+        p.push(("HTTPS".into(), "on".into()));
+    }
     if let Some(ct) = parts.headers.get(CONTENT_TYPE).and_then(|v| v.to_str().ok()) {
         p.push(("CONTENT_TYPE".into(), ct.into()));
     }
@@ -364,4 +427,28 @@ pub fn dev_ui_path() -> Option<std::path::PathBuf> {
 
 fn ui_html() -> String {
     dev_ui_path().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_else(|| include_str!("ui.html").to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn metrics_ignore_assets_for_last_page_and_keep_errors() {
+        let m = Metrics::default();
+        m.record("app", "php", "GET", "/dashboard", 200, Duration::from_millis(12));
+        m.record("app", "php", "GET", "/build/app.js", 200, Duration::from_millis(1));
+        let s = m.snapshot()["app"].clone();
+        assert_eq!((s.requests, s.last_path.as_str()), (2, "/dashboard"));
+        m.record("app", "php", "POST", "/orders", 500, Duration::from_millis(30));
+        let s = m.snapshot()["app"].clone();
+        assert_eq!((s.errors, s.last_err_status, s.last_err_path.as_str()), (1, 500, "POST /orders"));
+    }
+
+    #[test]
+    fn percent_decoding() {
+        assert_eq!(pct_decode("/caf%C3%A9%20noir"), "/café noir");
+        assert_eq!(pct_decode("/100%"), "/100%");
+    }
 }

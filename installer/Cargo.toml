@@ -1,0 +1,17 @@
+[package]
+name = "viherd-setup"
+version = "0.1.0"
+edition = "2021"
+description = "Installeur de Viherd (interface WebView personnalisée)"
+build = "build.rs"
+
+[[bin]]
+name = "viherd-setup"
+path = "src/main.rs"
+
+[dependencies]
+viherd = { path = ".." }
+anyhow = "1"
+serde_json = "1"
+tao = "0.37"
+wry = "0.57"

@@ -34,6 +34,7 @@ pub async fn run_until(shutdown: impl std::future::Future<Output = ()>) -> Resul
         dumps: Arc::new(DumpStore::default()),
         paused: Mutex::new(HashSet::new()),
         quit: tokio::sync::Notify::new(),
+        shares: Mutex::new(Default::default()),
     });
     let smtp_task = tokio::spawn(mail::serve(g.smtp_port, st.mail.clone()));
     let dump_task = tokio::spawn({
@@ -48,6 +49,16 @@ pub async fn run_until(shutdown: impl std::future::Future<Output = ()>) -> Resul
     let api = SocketAddr::from(([127, 0, 0, 1], g.api_port));
     let http = SocketAddr::from(([127, 0, 0, 1], g.http_port));
     let api_task = tokio::spawn(server::serve(api, st.clone(), true));
+    // HTTPS : le port 443 peut être pris (IIS, Herd…) sans empêcher le reste de tourner
+    let https = SocketAddr::from(([127, 0, 0, 1], g.https_port));
+    let https_task = tokio::spawn({
+        let st = st.clone();
+        async move {
+            if let Err(e) = server::serve_tls(https, st).await {
+                tracing::error!("HTTPS indisponible : {e:#}");
+            }
+        }
+    });
 
     // Services et découverte des sites en tâche de fond : les téléchargements (PHP, Node, MariaDB…)
     // ne doivent pas retarder l'ouverture des ports ni de l'interface.
@@ -64,6 +75,7 @@ pub async fn run_until(shutdown: impl std::future::Future<Output = ()>) -> Resul
         _ = st.quit.notified() => { tracing::info!("arrêt demandé via l'API"); Ok(()) }
     };
     api_task.abort();
+    https_task.abort();
     smtp_task.abort();
     dump_task.abort();
     st.sup.stop_all();
@@ -127,6 +139,11 @@ pub async fn reload(st: &State) -> Result<()> {
         }
         if let Err(e) = versions::ensure_php(&s.php(&g)).await {
             tracing::error!("{}: {e:#}", s.name);
+        }
+        if s.project.xdebug {
+            if let Err(e) = versions::ensure_xdebug(&s.php(&g)).await {
+                tracing::warn!("{}: Xdebug : {e:#}", s.name);
+            }
         }
         if let Some(n) = &s.project.node {
             if let Err(e) = versions::ensure_node(n).await {

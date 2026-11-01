@@ -55,6 +55,11 @@ impl PhpPool {
             return Ok(p.clone());
         }
         let dir = versions::ensure_php(&site.php(g)).await?;
+        if site.project.xdebug {
+            if let Err(e) = versions::ensure_xdebug(&site.php(g)).await {
+                tracing::warn!("[{}] Xdebug : {e:#}", site.name);
+            }
+        }
         let (free_tx, free_rx) = mpsc::unbounded_channel();
         let mut children = Vec::new();
         for _ in 0..g.php_processes.max(1) {

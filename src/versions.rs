@@ -43,6 +43,31 @@ fn enable_missing_exts(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Télécharge php_xdebug.dll (build NTS x64 correspondant à la version de PHP) depuis xdebug.org.
+pub async fn ensure_xdebug(php: &str) -> Result<PathBuf> {
+    let dir = ensure_php(php).await?;
+    let dll = dir.join("ext").join("php_xdebug.dll");
+    if dll.exists() {
+        return Ok(dll);
+    }
+    let page = client().get("https://xdebug.org/download").send().await?.error_for_status()?.text().await?;
+    let file = xdebug_file(&page, php).ok_or_else(|| anyhow!("pas de build Xdebug pour PHP {php} sur xdebug.org"))?;
+    let data = fetch(&format!("https://xdebug.org/files/{file}")).await?;
+    std::fs::write(&dll, data)?;
+    tracing::info!("Xdebug installé pour PHP {php} ({file})");
+    Ok(dll)
+}
+
+/// Nom du fichier stable le plus récent pour cette version de PHP, ex : php_xdebug-3.5.3-8.3-nts-vs16-x86_64.dll
+pub fn xdebug_file(page: &str, php: &str) -> Option<String> {
+    let needle = format!("-{php}-nts-");
+    page.split("/files/").skip(1)
+        .filter_map(|s| s.split(['\'', '"']).next())
+        .find(|f| f.starts_with("php_xdebug-") && f.contains(&needle) && f.ends_with("-x86_64.dll")
+            && !["alpha", "beta", "RC"].iter().any(|x| f.contains(x)))
+        .map(str::to_string)
+}
+
 pub async fn ensure_node(v: &str) -> Result<PathBuf> {
     let dir = paths::node_dir(v);
     if !dir.join("node.exe").exists() {
@@ -119,4 +144,18 @@ pub async fn install_composer() -> Result<()> {
     std::fs::write(dir.join("composer.bat"), "@php \"%~dp0composer.phar\" %*\r\n")?;
     println!("✔ Composer installé dans {}", dir.display());
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn picks_stable_nts_xdebug_build() {
+        let page = "<a href='/files/php_xdebug-3.6.0alpha1-8.3-nts-vs16-x86_64.dll'>\
+                    <a href='/files/php_xdebug-3.5.3-8.3-ts-vs16-x86_64.dll'>\
+                    <a href='/files/php_xdebug-3.5.3-8.3-nts-vs16-x86_64.dll'>\
+                    <a href='/files/php_xdebug-3.5.3-8.4-nts-vs17-x86_64.dll'>";
+        assert_eq!(super::xdebug_file(page, "8.3").as_deref(), Some("php_xdebug-3.5.3-8.3-nts-vs16-x86_64.dll"));
+        assert_eq!(super::xdebug_file(page, "8.4").as_deref(), Some("php_xdebug-3.5.3-8.4-nts-vs17-x86_64.dll"));
+        assert_eq!(super::xdebug_file(page, "7.4"), None);
+    }
 }

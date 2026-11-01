@@ -2,7 +2,7 @@
 use crate::paths;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub const PROJECT_FILE: &str = "viherd.toml";
@@ -18,6 +18,8 @@ pub fn minio_license() -> PathBuf {
 pub struct Global {
     pub tld: String,
     pub http_port: u16,
+    /// Port HTTPS des sites sécurisés (`viherd secure`)
+    pub https_port: u16,
     pub api_port: u16,
     pub smtp_port: u16,
     /// Nombre de php-cgi par projet (requêtes traitées en parallèle)
@@ -26,6 +28,8 @@ pub struct Global {
     pub default_node: String,
     pub parked: Vec<PathBuf>,
     pub links: BTreeMap<String, PathBuf>,
+    /// Sites servis en HTTPS (le HTTP redirige vers HTTPS)
+    pub secured: BTreeSet<String>,
     pub services: BTreeMap<String, Service>,
     /// Intercepter dump()/dd() (Symfony VarDumper) et les afficher dans Viherd
     pub dumps: bool,
@@ -77,6 +81,7 @@ impl Default for Global {
         Self {
             tld: "test".into(),
             http_port: 80,
+            https_port: 443,
             api_port: 7777,
             smtp_port: 2525,
             php_processes: 4,
@@ -84,6 +89,7 @@ impl Default for Global {
             default_node: "22".into(),
             parked: vec![],
             links: BTreeMap::new(),
+            secured: BTreeSet::new(),
             services,
             dumps: true,
             dump_port: 9912,
@@ -157,10 +163,16 @@ pub struct Project {
     pub root: Option<String>,
     /// Tout le site est proxifié vers une app Node (ex: 3000)
     pub proxy: Option<u16>,
+    /// Active Xdebug (mode debug, port 9003) pour PHP, les workers et le terminal du projet
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub xdebug: bool,
     /// Préfixes proxifiés (HTTP + WebSocket), ex: /app -> Reverb sur 8080
     pub routes: Vec<Route>,
     pub workers: Vec<Worker>,
     pub env: BTreeMap<String, String>,
+    /// Réglages php.ini propres au projet, ex : memory_limit = "1G"
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub php_ini: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -249,4 +261,40 @@ pub fn discover_sites(g: &Global) -> BTreeMap<String, Site> {
         add(n.clone(), p.clone());
     }
     m
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_parses_and_omits_defaults() {
+        let p: Project = toml::from_str(
+            "php = \"8.3\"\nxdebug = true\n[[workers]]\nname = \"queue\"\ncommand = \"php artisan queue:work\"\n[php_ini]\nmemory_limit = \"1G\"\n",
+        ).unwrap();
+        assert_eq!(p.php.as_deref(), Some("8.3"));
+        assert!(p.xdebug && p.workers[0].autorestart);
+        assert_eq!(p.php_ini["memory_limit"], "1G");
+        // un projet sans Xdebug ni php_ini n'écrit pas ces clés dans viherd.toml
+        let out = toml::to_string_pretty(&Project { php: Some("8.2".into()), ..Default::default() }).unwrap();
+        assert!(!out.contains("xdebug") && !out.contains("php_ini"));
+    }
+
+    #[test]
+    fn old_global_config_gets_new_defaults() {
+        let g: Global = toml::from_str("tld = \"test\"\nhttp_port = 8888\n").unwrap();
+        assert_eq!((g.http_port, g.https_port), (8888, 443));
+        assert!(g.secured.is_empty());
+    }
+
+    #[test]
+    fn plain_path_strips_verbatim_prefix() {
+        assert_eq!(plain_path(Path::new(r"\\?\C:\Sites\app")), PathBuf::from(r"C:\Sites\app"));
+        assert_eq!(plain_path(Path::new(r"\\?\UNC\srv\share")), PathBuf::from(r"\\srv\share"));
+    }
+
+    #[test]
+    fn site_names_are_normalized() {
+        assert_eq!(site_name("Mon Super_App"), "mon-super-app");
+    }
 }

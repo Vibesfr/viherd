@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use viherd::config::{self, find_project_root, site_name, Global, Project};
-use viherd::{daemon, download, env, hosts, paths, versions};
+use viherd::{certs, daemon, download, env, hosts, paths, share, versions};
 
 #[derive(Parser)]
 #[command(name = "viherd", version, about = "Environnement de dev PHP/Node local (à la Herd), en Rust")]
@@ -52,6 +52,14 @@ enum Cmd {
     Composer { #[arg(trailing_var_arg = true, allow_hyphen_values = true)] args: Vec<String> },
     #[command(disable_help_flag = true)]
     Artisan { #[arg(trailing_var_arg = true, allow_hyphen_values = true)] args: Vec<String> },
+    /// Sert le site en HTTPS (le site du dossier courant par défaut)
+    Secure { name: Option<String> },
+    /// Repasse le site en HTTP
+    Unsecure { name: Option<String> },
+    /// Approuve l'autorité de certification locale de Viherd dans Windows
+    Trust,
+    /// Partage le site sur une adresse publique temporaire (Cloudflare Tunnel) — Ctrl+C pour arrêter
+    Share { name: Option<String> },
     /// Écrit les sites dans le fichier hosts (admin)
     Hosts,
     /// État du démon (sites, workers)
@@ -181,6 +189,37 @@ async fn run(cli: Cli) -> Result<i32> {
             a.extend(args);
             return exec("php", &a, false).await;
         }
+        Cmd::Secure { name } => {
+            let mut g = Global::load()?;
+            let name = site_or_cwd(&g, name, &cwd)?;
+            if !certs::is_trusted() {
+                println!("Windows va demander d'approuver l'autorité « Viherd Local CA »…");
+                certs::trust()?;
+            }
+            g.secured.insert(name.clone());
+            g.save()?;
+            let port = if g.https_port == 443 { String::new() } else { format!(":{}", g.https_port) };
+            println!("✔ https://{name}.{}{port}  (pense à APP_URL dans le .env)", g.tld);
+            notify_reload().await;
+        }
+        Cmd::Unsecure { name } => {
+            let mut g = Global::load()?;
+            let name = site_or_cwd(&g, name, &cwd)?;
+            g.secured.remove(&name);
+            g.save()?;
+            println!("✔ http://{name}.{}", g.tld);
+            notify_reload().await;
+        }
+        Cmd::Trust => {
+            certs::trust()?;
+            println!("✔ autorité approuvée ({})", certs::ca_cert_path().display());
+            println!("  Firefox : Paramètres → Certificats → Importer ce fichier, ou security.enterprise_roots.enabled = true");
+        }
+        Cmd::Share { name } => {
+            let g = Global::load()?;
+            let name = site_or_cwd(&g, name, &cwd)?;
+            return share::run_foreground(&g, &name).await;
+        }
         Cmd::Hosts => {
             let n = hosts::sync(&Global::load()?)?;
             println!("✔ {n} site(s) écrits dans le fichier hosts");
@@ -213,6 +252,9 @@ async fn exec(program: &str, args: &[String], ensure_all: bool) -> Result<i32> {
     let node = project.node.clone().unwrap_or_else(|| g.default_node.clone());
     if ensure_all || matches!(program, "php" | "composer") {
         versions::ensure_php(&php).await?;
+        if project.xdebug {
+            versions::ensure_xdebug(&php).await?;
+        }
     }
     if ensure_all || matches!(program, "node" | "npm" | "npx") {
         versions::ensure_node(&node).await?;
@@ -223,6 +265,18 @@ async fn exec(program: &str, args: &[String], ensure_all: bool) -> Result<i32> {
     let envs = env::project_env(&g, &root, &project);
     let status = env::build_command(program, args, &cwd, &envs)?.status()?;
     Ok(status.code().unwrap_or(1))
+}
+
+/// Le site nommé, ou celui du dossier courant (lié ou dans un dossier parqué).
+fn site_or_cwd(g: &Global, name: Option<String>, cwd: &std::path::Path) -> Result<String> {
+    let sites = config::discover_sites(g);
+    if let Some(n) = name {
+        let n = site_name(n.trim_end_matches(&format!(".{}", g.tld)));
+        return if sites.contains_key(&n) { Ok(n) } else { bail!("site inconnu: {n}") };
+    }
+    let root = find_project_root(cwd);
+    sites.values().find(|s| s.path == root || cwd.starts_with(&s.path)).map(|s| s.name.clone())
+        .ok_or_else(|| anyhow::anyhow!("ce dossier n'est pas un site Viherd (`viherd link` ou `viherd park`)"))
 }
 
 async fn notify_reload() -> bool {

@@ -24,8 +24,11 @@ un superviseur de workers et des services gérés, pilotés depuis une vraie app
 | **Sites** | `*.test` par dossier parqué ou lié, fichiers statiques, apps Node en proxy (`proxy = 3000`) |
 | **PHP & Node isolés** | chaque projet a sa version (`viherd.toml`), son propre `php-cgi` et un `PATH` qui ne contient que ses binaires |
 | **Workers & queues** | queue, scheduler, Horizon, Reverb, Pulse, Vite… supervisés, redémarrage auto, détection des crash-loops, logs en direct |
-| **Files Laravel** | jobs en attente / en cours / échoués par file (`QUEUE_CONNECTION=database`), relancer, vider, `queue:restart` |
-| **WebSockets** | proxy WebSocket vers Reverb (`/app`, `/apps`) |
+| **Files Laravel** | jobs en attente / en cours / différés / échoués par file (`database` ou `redis`), état d'Horizon, relancer, vider, `queue:restart` |
+| **HTTPS local** | `viherd secure` : autorité de certification locale approuvée dans Windows, certificat par site généré à la volée |
+| **Partage** | `viherd share` : adresse publique `https://…trycloudflare.com` via Cloudflare Tunnel, sans compte |
+| **Xdebug & php.ini** | Xdebug activable par projet (téléchargé au besoin), réglages `php.ini` propres à chaque projet |
+| **WebSockets** | proxy WebSocket vers Reverb (`/app`, `/apps`), aussi en `wss://` |
 | **Services** | MySQL (MariaDB), PostgreSQL, Redis, RustFS / MinIO (S3), Meilisearch — téléchargés au premier lancement |
 | **Explorateur de BDD** | parcourir, filtrer, éditer, insérer, supprimer, éditeur SQL, export CSV, sauvegardes / restauration intégrées |
 | **Dumps** | `dump()` / `dd()` capturés avec fichier et ligne, affichés en arbre dépliable (comme Herd) |
@@ -34,12 +37,21 @@ un superviseur de workers et des services gérés, pilotés depuis une vraie app
 
 ## Installation
 
+### Avec l'installeur
+
+Lance **`viherd-setup.exe`** : installation dans `%LOCALAPPDATA%\Programs\Viherd`, sans droits administrateur,
+avec la commande `viherd` dans le `PATH`, les raccourcis, le démarrage automatique en option et une entrée
+dans « Applications installées » pour désinstaller. Relancer l'installeur met à jour Viherd.
+
+### Depuis les sources
+
 Prérequis : Windows 10/11 et [Rust](https://rustup.rs) (avec les *Visual Studio Build Tools*).
 
 ```powershell
 git clone https://github.com/Vibesfr/viherd.git
 cd viherd
 cargo build --release
+.\build-installer.ps1        # optionnel : produit target\release\viherd-setup.exe
 ```
 
 Deux binaires sont produits dans `target\release\` :
@@ -82,6 +94,25 @@ viherd run <commande>
 
 `viherd status` affiche l'état, `viherd reload` recharge les `viherd.toml`.
 
+### HTTPS et partage
+
+```powershell
+viherd secure                # https://mon-app.test (le HTTP redirige vers HTTPS)
+viherd unsecure
+viherd trust                 # approuve seulement l'autorité locale dans Windows
+viherd share                 # adresse publique temporaire, Ctrl+C pour arrêter
+```
+
+`viherd secure` crée au premier usage une autorité de certification propre à ta machine
+(`~/.viherd/certs/ca.crt`) et l'ajoute aux autorités racines de **ton compte** : Windows demande
+une confirmation, pas besoin d'être administrateur. Chrome et Edge la reconnaissent aussitôt ;
+pour Firefox, active `security.enterprise_roots.enabled` ou importe `ca.crt`. Pense à passer
+`APP_URL` en `https://` dans le `.env`.
+
+`viherd share` télécharge `cloudflared` au premier usage et ouvre un tunnel Cloudflare « rapide »
+(sans compte). Viherd transmet `HTTPS=on` à PHP pour ces visites : Laravel génère des URL
+en `https://…trycloudflare.com` sans configuration.
+
 ## Configuration d'un projet — `viherd.toml`
 
 ```toml
@@ -104,9 +135,16 @@ command = "php artisan reverb:start --host=127.0.0.1 --port=8080"
 
 [env]
 # APP_ENV = "local"
+
+[php_ini]            # réglages php.ini propres au projet
+# memory_limit = "1G"
 ```
 
-Voir [`viherd.example.toml`](viherd.example.toml). Les workers peuvent aussi être ajoutés depuis l'interface.
+Ajoute `xdebug = true` (en haut du fichier) pour activer Xdebug sur PHP, les workers et le terminal
+du projet : la DLL correspondant à la version de PHP est téléchargée depuis xdebug.org, en mode
+`debug,develop` sur le port **9003** (VS Code : extension *PHP Debug*, « Listen for Xdebug »).
+
+Voir [`viherd.example.toml`](viherd.example.toml). Workers, Xdebug et `php.ini` se règlent aussi depuis l'interface.
 
 ## Services
 
@@ -141,9 +179,10 @@ Logs : `%USERPROFILE%\.viherd\logs`. La page de chaque site affiche aussi son `s
 
 ```
 viherd-app / viherd start
- ├─ proxy HTTP (hyper) ── foo.test ──► fichier statique
- │                       ├──────────► pool php-cgi isolé du projet foo (FastCGI)
- │                       └─ /app (WS) ► Reverb du projet foo
+ ├─ proxy HTTP / HTTPS ── foo.test ──► fichier statique
+ │   (rustls, certificat │           ├──────────► pool php-cgi isolé du projet foo (FastCGI)
+ │    par site à la volée)           └─ /app (WS) ► Reverb du projet foo
+ ├─ cloudflared ─► xxx.trycloudflare.com → foo   (viherd share)
  ├─ API + interface        127.0.0.1:7777
  ├─ superviseur ─► queue:work, schedule:work, reverb, npm run dev…   (par projet)
  ├─ services    ─► mariadbd, postgres, redis-server, rustfs, meilisearch
@@ -158,6 +197,8 @@ Les binaires de PHP, Node et des services sont stockés une seule fois par versi
 | Clé | Défaut | |
 |---|---|---|
 | `http_port` | `80` | port des sites |
+| `https_port` | `443` | port des sites sécurisés |
+| `secured` | `[]` | sites servis en HTTPS (géré par `viherd secure`) |
 | `api_port` | `7777` | API et interface |
 | `smtp_port` | `2525` | capture des mails |
 | `php_processes` | `4` | php-cgi par projet (requêtes en parallèle) |
@@ -178,7 +219,9 @@ src/
  ├─ app.rs          appli de bureau (tao + wry + tray-icon)
  ├─ main.rs         CLI
  ├─ daemon.rs       orchestration
- ├─ server.rs       proxy HTTP / WebSocket, API
+ ├─ server.rs       proxy HTTP / HTTPS / WebSocket, API
+ ├─ certs.rs        autorité locale et certificats par site · share.rs  tunnel Cloudflare
+ ├─ redis.rs        client Redis minimal (files Laravel, Horizon)
  ├─ ui.rs           routes de l'API
  ├─ ui.html         interface (un seul fichier, embarqué dans le binaire)
  ├─ php_pool.rs     pool php-cgi par projet · fastcgi.rs
@@ -186,14 +229,16 @@ src/
  ├─ services.rs     MySQL, PostgreSQL, Redis, S3, Meilisearch
  ├─ db.rs           explorateur et sauvegardes
  ├─ dumps.rs        serveur de dumps · mail.rs  SMTP
- └─ versions.rs     installation de PHP / Node / Composer
+ └─ versions.rs     installation de PHP / Node / Composer / Xdebug
+installer/          viherd-setup.exe : fenêtre WebView sans bordure, interface dans installer/src/ui.html
 ```
 
-## Feuille de route
+`cargo test` lance les tests unitaires ; la CI GitHub Actions compile et teste sous Windows
+et publie `viherd-setup.exe` en artefact.
 
-- HTTPS local (équivalent de `herd secure`)
-- Suivi des files Redis / Horizon
-- Installeur Windows
+L'interface de l'installeur est une simple page HTML : pour la retoucher, ouvre
+`installer/src/ui.html` dans un navigateur (les boutons s'y affichent dans la console),
+puis `.\build-installer.ps1`.
 
 ---
 

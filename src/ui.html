@@ -122,6 +122,8 @@ section.blk { display: grid; gap: 12px; align-content: start; min-width: 0; }
 .b.pri { background: var(--pri); color: var(--pri-t); border-color: var(--pri); }
 .b.pri svg.i { color: var(--pri-t); }
 .b.pri:hover { background: var(--pri-h); }
+.b.on { border-color: var(--blue); color: var(--blue); }
+.b.on svg.i { color: var(--blue); }
 .b.sm { height: 30px; padding: 0 12px; font-size: 13px; border-radius: 6px; gap: 7px; }
 .b.sm svg.i { width: 13px; height: 13px; }
 .b.ghost { border-color: transparent; background: transparent; color: var(--t2); }
@@ -656,6 +658,7 @@ const P = {
   sparkle: '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M6.5 17.5 9 15M15 9l2.5-2.5"/>', box: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>', search2: '<circle cx="10.5" cy="10.5" r="6"/><path d="m19.5 19.5-4.5-4.5M8 10.5h5"/>',
   php: '<ellipse cx="12" cy="12" rx="9" ry="5.5"/><path d="M8 14.5 9 9.5h2a1.3 1.3 0 0 1 0 2.6H8.5M13 14.5l1-5M15.5 14.5l.6-3"/>', node: '<path d="M12 2.8 20 7.4v9.2l-8 4.6-8-4.6V7.4z"/>',
   power: '<path d="M12 4v8M7.5 6.5a7 7 0 1 0 9 0"/>', key: '<circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2 2M14 9l1.5 1.5"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>', share: '<circle cx="17.5" cy="6" r="2.5"/><circle cx="6.5" cy="12" r="2.5"/><circle cx="17.5" cy="18" r="2.5"/><path d="m8.7 13.2 6.6 3.6M15.3 7.2l-6.6 3.6"/>',
 };
 const ic = (n, cls = 'i', sw = 1.6) => `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${P[n] || ''}</svg>`;
 const LOGO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 5.5 7.5 13 7.5-13"/></svg>';
@@ -777,6 +780,8 @@ function machineMenu(anchor) {
     { text: 'Ouvrir le dossier des logs', icon: ic('folder'), run: () => act('/api/open', { path: S.logs_dir }) },
     { text: 'Recharger la configuration', icon: ic('refresh'), run: () => act('/api/reload', {}, 'Configuration rechargée') },
     { text: 'Mettre à jour le fichier hosts', icon: ic('shield'), run: () => act('/api/hosts', {}, r => r.count + ' site(s) écrits') },
+    S.ca_trusted ? { text: 'Certificat de l’autorité HTTPS', icon: ic('lock'), run: () => act('/api/certs/open', {}) }
+      : { text: 'Approuver l’autorité HTTPS…', icon: ic('lock'), run: trustCa },
     { text: document.documentElement.dataset.theme === 'dark' ? 'Thème clair' : 'Thème sombre', icon: ic('sun'), hint: 'Shift T', run: toggleTheme },
     { sep: 1 },
     { text: 'Quitter Viherd', icon: ic('power'), run: () => { if (confirm('Arrêter Viherd, ses sites, workers et services ?')) fetch('/api/quit', { method: 'POST' }); } },
@@ -894,7 +899,7 @@ function pOverview() {
   LOGEV = parseEvents();
   const iss = issues(), svcOn = S.services.filter(s => s.running).length, port = p => ':' + p;
   const machine = [
-    ['Proxy HTTP', port(S.http_port), 'ok'], ['API & interface', port(S.api_port), 'ok'], ['SMTP', port(S.smtp_port), 'ok'], ['Dumps', S.dumps_enabled ? port(S.dump_port) : 'désactivés', S.dumps_enabled ? 'ok' : ''],
+    ['Proxy HTTP', port(S.http_port), 'ok'], ['HTTPS', S.ca_trusted ? port(S.https_port) : 'autorité non approuvée', S.ca_trusted ? 'ok' : ''], ['API & interface', port(S.api_port), 'ok'], ['SMTP', port(S.smtp_port), 'ok'], ['Dumps', S.dumps_enabled ? port(S.dump_port) : 'désactivés', S.dumps_enabled ? 'ok' : ''],
     ['PHP par défaut', S.default_php, S.installed.php.includes(S.default_php) ? '' : 'err'], ['Node par défaut', S.default_node, ''], ['Services', `${svcOn} / ${S.services.length}`, svcOn ? 'ok' : ''],
   ];
   const q = siteQ.toLowerCase(), list = S.sites.filter(s => !q || (s.name + ' ' + s.path).toLowerCase().includes(q))
@@ -988,6 +993,7 @@ function pSite(name, tab) {
       <div class="acts">
         <button class="b" onclick="act('/api/open-terminal',{site:${J(s.name)}})" title="Terminal avec le PHP ${esc(s.php)} et le Node ${esc(s.node)} de ce projet">${ic('term')}Terminal</button>
         <button class="b" onclick="act('/api/open-editor',{path:${J(s.path)}})">${ic('code')}Éditeur</button>
+        <button class="b ${shareOn(s) ? 'on' : ''}" onclick="shareMenu(this,${J(s.name)})" title="Adresse publique temporaire (Cloudflare Tunnel)">${ic('share')}${shareOn(s) ? (s.share.url ? 'Partagé' : 'Ouverture…') : 'Partager'}</button>
         <a class="b pri" href="${esc(s.url)}" target="_blank">Visiter</a></div></div>
     ${body(s)}</div>`);
   if (tab === 'logs') loadLaravelLog(s);
@@ -1004,10 +1010,14 @@ function siteOverview(s) {
           ${det('Statut', ST[st][0], { dot: ST[st][1] })}
           ${det('Racine', esc(root), { mono: true })}
           ${det('Origine', s.linked ? 'Projet lié' : 'Dossier parqué')}
+          ${det('HTTPS', s.secure ? 'Activé' : 'Désactivé', { dot: s.secure ? (S.ca_trusted ? 'ok' : 'warn') : '', small: s.secure && !S.ca_trusted ? 'autorité non approuvée' : '', on: `secureSite(${J(s.name)},${!s.secure})`, title: s.secure ? 'Repasser en HTTP' : 'Servir en HTTPS' })}
+          ${s.proxy ? '' : det('Xdebug', s.xdebug ? 'Activé · port 9003' : 'Désactivé', { dot: s.xdebug ? 'ok' : '', on: `saveSite(${J(s.name)},{xdebug:${!s.xdebug}})`, title: s.xdebug ? 'Désactiver Xdebug' : 'Activer Xdebug' })}
+          ${shareOn(s) ? det('Partage', s.share.url ? esc(s.share.url.replace(/^https:\/\//, '')) : 'ouverture du tunnel…', { mono: true, dot: s.share.url ? 'live' : 'warn', on: s.share.url ? `copy(${J(s.share.url)},'Adresse publique copiée')` : '', title: 'Copier' }) : ''}
           ${s.proxy ? det('PHP', '—', { mono: true }) : det('PHP', esc(s.php), { mono: true, small: s.php_pinned ? 'isolé' : 'défaut', on: `verMenu(this,'php',${J(s.name)})`, title: 'Changer de version' })}
           ${det('Node.js', esc(s.node), { mono: true, small: s.node_pinned ? 'isolé' : 'défaut', on: `verMenu(this,'node',${J(s.name)})`, title: 'Changer de version' })}
           ${det('Requêtes · 5 min', fmtNum(recent5(s)) + (m.errors ? ` · ${m.errors} erreur${m.errors > 1 ? 's' : ''} au total` : ''), { mono: true })}
-          ${det('Dernière requête', m.last_at ? `${ago(m.last_at)} · ${m.last_status} · ${m.last_ms} ms` : 'aucune')}
+          ${det('Dernière requête', m.last_at ? `${m.last_path ? `<span class="mono">${esc((m.last_method || 'GET') + ' ' + m.last_path)}</span> · ` : ''}${m.last_status} · ${m.last_ms} ms` : 'aucune', { small: m.last_at ? ago(m.last_at) : '' })}
+          ${m.last_err_at ? det('Dernière erreur', `<span class="mono">${esc(m.last_err_path)}</span> · ${m.last_err_status}`, { dot: 'err', small: ago(m.last_err_at), on: `go('sites',${J(s.name)},'logs')`, title: 'Voir le log Laravel' }) : ''}
         </div></div>
       <div class="box-f">${ic('info')}<span>Isolé : <b style="color:var(--t1);font-weight:500">php-cgi, workers, terminal et <span class="mono">viherd npm</span></b> utilisent les versions de ce projet.</span></div>
     </section>
@@ -1099,6 +1109,13 @@ function siteSettings(s) {
     ${setBlock('Proxy vers un port', 'Pour une app 100 % Node (Next, Nuxt, Astro…) : tout le site est renvoyé vers ce port au lieu de PHP.', `<input class="inp mono" id="set-proxy" value="${s.proxy || ''}" placeholder="3000">`, 'Vide = PHP · clé <span class="hl">proxy</span>', `saveSite(${J(s.name)},{proxy:parseInt($('set-proxy').value,10)>0?parseInt($('set-proxy').value,10):null})`)}
     ${s.proxy ? '' : setBlock('Version de PHP', 'Utilisée par php-cgi, les workers, le terminal et <span class="hl">viherd php</span>.', `<select class="inp" id="set-php" style="max-width:360px">${opts('php', s.php, s.php_pinned)}</select>`, '<span class="hl">viherd use php &lt;version&gt;</span>', `act('/api/site/php',{site:${J(s.name)},version:$('set-php').value},'PHP mis à jour','Application… (téléchargement si besoin)')`)}
     ${setBlock('Version de Node.js', 'Utilisée par <span class="hl">viherd npm</span>, Vite et les workers Node.', `<select class="inp" id="set-node" style="max-width:360px">${opts('node', s.node, s.node_pinned)}</select>`, '<span class="hl">viherd use node &lt;version&gt;</span>', `act('/api/site/node',{site:${J(s.name)},version:$('set-node').value},'Node mis à jour','Application… (téléchargement si besoin)')`)}
+    ${setBlock('HTTPS', `Sert <span class="hl">https://${esc(s.name)}.${esc(S.tld)}</span> avec un certificat signé par l'autorité locale de Viherd ; le HTTP redirige vers HTTPS. Pense à mettre <span class="hl">APP_URL</span> en https dans le .env.`,
+      `<div class="st" style="gap:10px">${sw(s.secure, `secureSite(${J(s.name)},${!s.secure})`, s.secure ? 'Repasser en HTTP' : 'Servir en HTTPS')}<span>${s.secure ? 'Activé' : 'Désactivé'}</span>${s.secure && !S.ca_trusted ? `<button class="link" onclick="trustCa()">Approuver l'autorité dans Windows</button>` : ''}</div>`,
+      '<span class="hl">viherd secure</span> · <span class="hl">viherd unsecure</span>')}
+    ${s.proxy ? '' : setBlock('Xdebug', 'Débogage pas à pas : Xdebug se connecte à ton éditeur sur le port <span class="hl">9003</span> (VS Code : extension PHP Debug, « Listen for Xdebug »). Téléchargé au premier usage.',
+      `<div class="st" style="gap:10px">${sw(s.xdebug, `saveSite(${J(s.name)},{xdebug:${!s.xdebug}})`, s.xdebug ? 'Désactiver' : 'Activer')}<span>${s.xdebug ? 'Activé pour PHP, les workers et le terminal' : 'Désactivé'}</span></div>`,
+      'Clé <span class="hl">xdebug = true</span> dans viherd.toml')}
+    ${s.proxy ? '' : setBlock('Réglages php.ini', 'Propres à ce projet, appliqués après le php.ini de la version de PHP.', `<div class="kvs" id="set-ini">${Object.entries(s.php_ini || {}).map(([k, v]) => kvRow(k, v, 'memory_limit', '1G')).join('')}</div><button class="b sm" style="justify-self:start" onclick="addKv('set-ini','memory_limit','1G')">${ic('plus')}Ajouter un réglage</button>`, 'Section <span class="hl">[php_ini]</span>', `saveSite(${J(s.name)},{php_ini:Object.fromEntries([...document.querySelectorAll('#set-ini .kvr')].map(r=>[...r.querySelectorAll('input')].map(i=>i.value.trim())).filter(([k])=>k))})`)}
     ${setBlock('Routes proxifiées', 'HTTP et WebSocket vers un port local, par exemple <span class="hl">/app → 8080</span> pour Reverb.', `<div class="kvs" id="set-routes">${s.routes.map(r => kvRow(r.path, r.port, '/app', '8080')).join('')}</div><button class="b sm" style="justify-self:start" onclick="addKv('set-routes','/app','8080')">${ic('plus')}Ajouter une route</button>`, 'Section <span class="hl">[[routes]]</span>', `saveSite(${J(s.name)},{routes:[...document.querySelectorAll('#set-routes .kvr')].map(r=>{const[p,q]=r.querySelectorAll('input');return{path:p.value.trim(),port:parseInt(q.value,10)}}).filter(r=>r.path&&r.port)})`)}
     ${setBlock("Variables d'environnement", 'Injectées dans PHP, les workers et le terminal de ce projet.', `<div class="kvs" id="set-env">${Object.entries(s.env || {}).map(([k, v]) => kvRow(k, v, 'APP_DEBUG', 'true')).join('')}</div><button class="b sm" style="justify-self:start" onclick="addKv('set-env','APP_DEBUG','true')">${ic('plus')}Ajouter une variable</button>`, 'Section <span class="hl">[env]</span>', `saveSite(${J(s.name)},{env:Object.fromEntries([...document.querySelectorAll('#set-env .kvr')].map(r=>[...r.querySelectorAll('input')].map(i=>i.value)).filter(([k])=>k.trim()).map(([k,v])=>[k.trim(),v]))})`)}
     <section class="box"><div class="set-in"><h3>Fichiers</h3><p>Le projet et sa configuration Viherd.</p></div>
@@ -1108,6 +1125,22 @@ function siteSettings(s) {
   </div>`;
 }
 const saveSite = (site, patch) => act('/api/site/project', { site, patch }, 'Enregistré dans viherd.toml', 'Enregistrement…');
+
+/* ---------- HTTPS et partage ---------- */
+const shareOn = s => ['running', 'starting'].includes(s.share?.state);
+const secureSite = (site, on) => act('/api/site/secure', { site, on }, on ? 'Site servi en HTTPS' : 'Site repassé en HTTP', on && !S.ca_trusted ? 'Confirme l’autorité Viherd dans la fenêtre Windows…' : 'Application…');
+const trustCa = () => act('/api/certs/trust', {}, 'Autorité approuvée : les certificats sont reconnus', 'Confirme l’autorité Viherd dans la fenêtre Windows…');
+function shareMenu(anchor, site) {
+  const s = siteOf(site);
+  if (!shareOn(s)) return act('/api/site/share', { site, on: true }, 'Tunnel en cours d’ouverture…', 'Préparation (téléchargement de cloudflared si besoin)…');
+  popover(anchor, { width: 320, items: [
+    { label: s.share.url ? 'Adresse publique' : 'Ouverture du tunnel…' },
+    ...(s.share.url ? [{ text: s.share.url.replace(/^https:\/\//, ''), icon: ic('copy'), run: () => copy(s.share.url, 'Adresse publique copiée') },
+      { text: 'Ouvrir dans le navigateur', icon: ic('ext'), run: () => window.open(s.share.url, '_blank') }] : []),
+    { text: 'Journal du tunnel', icon: ic('term'), run: () => go('logs', 'share:' + site) },
+    { sep: 1 }, { text: 'Arrêter le partage', icon: ic('stop'), run: () => act('/api/site/share', { site, on: false }, 'Partage arrêté') },
+  ] });
+}
 
 /* =====================================================================
    Workers : tableau dépliable (sortie en direct, file Laravel, diagnostic)
@@ -1189,9 +1222,13 @@ async function loadQueue(site) {
   let q; try { q = await apiGet('/api/site/queue', { site }); } catch (e) { box.innerHTML = `<span class="wk-lbl">${esc(e.message)}</span>`; return; }
   if (!$('wk-queue')) return;
   if (!q.supported) { box.innerHTML = `<span class="wk-lbl">File Laravel</span><div class="note">${ic('info')}<span>${esc(q.reason || 'File non suivie')}${q.connection ? ` · <span class="hl">QUEUE_CONNECTION=${esc(q.connection)}</span>` : ''}</span></div>`; return; }
-  const pend = q.queues.reduce((a, x) => a + x.pending - x.running, 0), run = q.queues.reduce((a, x) => a + x.running, 0), mx = Math.max(1, ...q.queues.map(y => y.pending));
+  // file « database » : pending compte aussi les jobs réservés ; file Redis : liste d'attente seule
+  const waiting = x => q.engine === 'redis' ? x.pending : x.pending - x.running;
+  const pend = q.queues.reduce((a, x) => a + waiting(x), 0), run = q.queues.reduce((a, x) => a + x.running, 0), later = q.queues.reduce((a, x) => a + (x.delayed || 0), 0), mx = Math.max(1, ...q.queues.map(y => y.pending));
+  const hz = q.horizon;
   box.innerHTML = `<span class="wk-lbl">File Laravel <span class="mono dim">${esc(q.engine)} · ${esc(q.database)}</span><span class="sp"></span><button class="ib" style="width:24px;height:24px" title="Actualiser" onclick="loadQueue(${J(site)})">${ic('refresh')}</button></span>
-    <div class="qstats"><div><span>En attente</span><b>${fmtNum(pend)}</b></div><div><span>En cours</span><b class="${run ? 'run' : ''}">${fmtNum(run)}</b></div><div><span>Échoués</span><b class="${q.failed ? 'bad' : ''}">${fmtNum(q.failed)}</b></div></div>
+    ${hz?.installed ? `<div class="note">${dot(hz.running ? (hz.paused ? 'warn' : 'ok') : '')}<span>Horizon ${hz.running ? (hz.paused ? 'en pause' : 'actif') : 'arrêté'}${hz.running ? '' : ` · lance le worker <span class="hl">php artisan horizon</span>`}</span></div>` : ''}
+    <div class="qstats"><div><span>En attente</span><b>${fmtNum(pend)}</b></div><div><span>En cours</span><b class="${run ? 'run' : ''}">${fmtNum(run)}</b></div>${later ? `<div><span>Différés</span><b>${fmtNum(later)}</b></div>` : ''}<div><span>Échoués</span><b class="${q.failed ? 'bad' : ''}">${fmtNum(q.failed)}</b></div></div>
     ${q.queues.length > 1 ? `<div class="qlist">${q.queues.map(x => `<div><span class="mono ell">${esc(x.queue)}</span><i class="qbar"><i style="width:${x.pending / mx * 100}%"></i></i><span class="dim mono">${fmtNum(x.pending)}</span></div>`).join('')}</div>` : ''}
     ${q.failed ? `<div class="fails">${q.recent_failed.slice(0, 4).map(f => `<div class="fail"><div class="grow"><b class="ell" style="display:block">${esc((f.job || 'Job').split('\\').pop())}</b><div class="e ell">${esc(f.error || '')}</div></div><button class="b sm ghost" onclick="artisanQ(${J(site)},'retry',${J(f.uuid)})">Relancer</button></div>`).join('')}</div>
       <div class="acts" style="gap:14px"><button class="link" onclick="artisanQ(${J(site)},'retry-all')">Relancer les ${fmtNum(q.failed)} jobs échoués</button><button class="link" style="color:var(--red)" onclick="if(confirm('Supprimer définitivement tous les jobs échoués ?'))artisanQ(${J(site)},'flush')">Vider</button></div>` : ''}

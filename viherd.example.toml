@@ -8,6 +8,9 @@ node = "22"
 # Pour une app 100% Node (Next, Nuxt...) : tout le site est proxifié vers ce port
 # proxy = 3000
 
+# Xdebug (mode debug, port 9003) pour PHP, les workers et le terminal de ce projet
+# xdebug = true
+
 # WebSockets Laravel Reverb : ws://monprojet.test/app/... -> Reverb sur 8080
 [[routes]]
 path = "/app"
@@ -37,3 +40,7 @@ command = "php artisan reverb:start --host=127.0.0.1 --port=8080"
 # Variables d'environnement ajoutées aux processus du projet
 [env]
 # APP_ENV = "local"
+
+# Réglages php.ini propres au projet
+# [php_ini]
+# memory_limit = "1G"

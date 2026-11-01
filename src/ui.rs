@@ -1,7 +1,8 @@
 //! API JSON de l'interface graphique (servie par le démon sur http://127.0.0.1:7777/).
 use crate::config::{Global, Project};
 use crate::server::{full, json, pct_decode, Body, State};
-use crate::{daemon, db, env, hosts, paths, services, supervisor, versions};
+use crate::redis::Reply;
+use crate::{certs, daemon, db, env, hosts, paths, services, share, supervisor, versions};
 use anyhow::{anyhow, bail, Result};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
@@ -169,7 +170,7 @@ async fn route(req: Request<Incoming>, st: &Arc<State>) -> Result<Response<Body>
             let mut cur = serde_json::to_value(Project::load(&site.path)?)?;
             if let (Some(obj), Some(patch)) = (cur.as_object_mut(), body.get("patch").and_then(|p| p.as_object())) {
                 for (k, v) in patch {
-                    if ["workers", "routes", "env", "proxy", "root"].contains(&k.as_str()) {
+                    if ["workers", "routes", "env", "proxy", "root", "xdebug", "php_ini"].contains(&k.as_str()) {
                         obj.insert(k.clone(), v.clone());
                     }
                 }
@@ -180,8 +181,45 @@ async fn route(req: Request<Incoming>, st: &Arc<State>) -> Result<Response<Body>
                 if w.name.trim().is_empty() || w.command.trim().is_empty() { bail!("chaque worker doit avoir un nom et une commande"); }
                 if !names.insert(w.name.clone()) { bail!("deux workers s'appellent « {} »", w.name); }
             }
+            if p.xdebug {
+                let php = site.php(&st.global.read().unwrap());
+                versions::ensure_xdebug(&php).await?;
+            }
             p.save(&site.path)?;
             daemon::reload(st).await?;
+            ok()
+        }
+
+        // ---------- HTTPS et partage ----------
+        ("POST", "/api/site/secure") => {
+            let site = site_of(st, &s("site"))?;
+            let on = body.get("on").and_then(|v| v.as_bool()).unwrap_or(true);
+            if on && !certs::trusted_cached() {
+                // certutil attend la confirmation de l'utilisateur dans une fenêtre Windows
+                tokio::task::spawn_blocking(certs::trust).await??;
+            }
+            let mut g = Global::load()?;
+            if on { g.secured.insert(site.name.clone()); } else { g.secured.remove(&site.name); }
+            g.save()?;
+            st.global.write().unwrap().secured = g.secured.clone();
+            ok()
+        }
+        ("POST", "/api/certs/trust") => {
+            tokio::task::spawn_blocking(certs::trust).await??;
+            ok()
+        }
+        ("POST", "/api/certs/open") => {
+            certs::Ca::load_or_create()?;
+            std::process::Command::new("explorer").arg("/select,").arg(certs::ca_cert_path()).spawn()?;
+            ok()
+        }
+        ("POST", "/api/site/share") => {
+            let site = site_of(st, &s("site"))?;
+            if body.get("on").and_then(|v| v.as_bool()).unwrap_or(true) {
+                share::start(st, &site.name).await?;
+            } else {
+                share::stop(st, &site.name);
+            }
             ok()
         }
 
@@ -479,45 +517,125 @@ fn read_dotenv(dir: &Path) -> std::collections::HashMap<String, String> {
     m
 }
 
-/// État de la file Laravel d'un site (driver « database ») : jobs en attente par queue, en cours, échecs récents.
+/// Base de données d'un projet Laravel d'après son .env (pour la file « database » et la table failed_jobs).
+fn laravel_db(env: &std::collections::HashMap<String, String>) -> std::result::Result<(db::Target, String), String> {
+    let driver = env.get("DB_CONNECTION").map(String::as_str).unwrap_or("sqlite");
+    let (kind, svc) = match driver {
+        "pgsql" => (db::Kind::Pg, "postgres"),
+        "mysql" | "mariadb" => (db::Kind::My, "mysql"),
+        other => return Err(format!("Base « {other} » non prise en charge pour le suivi de la file.")),
+    };
+    let port = env.get("DB_PORT").and_then(|p| p.parse().ok()).unwrap_or(if kind == db::Kind::Pg { 5432 } else { 3306 });
+    Ok((db::Target { kind, svc: svc.into(), port }, env.get("DB_DATABASE").cloned().unwrap_or_default()))
+}
+
+/// Jobs échoués de la table failed_jobs : nombre total et les plus récents.
+async fn db_failed(t: &db::Target, dbn: &str) -> (u64, Vec<Value>) {
+    let n = db::run(t, dbn, "SELECT COUNT(*) FROM failed_jobs").await.ok()
+        .and_then(|r| r.rows.first().and_then(|x| x[0].clone())).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
+    let recent = db::run(t, dbn, "SELECT uuid, queue, LEFT(exception, 400), failed_at, LEFT(payload, 600) FROM failed_jobs ORDER BY failed_at DESC LIMIT 8").await
+        .map(|r| r.rows).unwrap_or_default();
+    (n, recent.iter().map(|r| failed_json(r[0].as_deref(), r[1].as_deref(), r[2].as_deref(), r[3].as_deref(), r[4].as_deref())).collect())
+}
+
+fn failed_json(uuid: Option<&str>, queue: Option<&str>, error: Option<&str>, at: Option<&str>, payload: Option<&str>) -> Value {
+    // nom lisible du job à partir du payload JSON (displayName)
+    let job = payload.and_then(|p| p.split("\"displayName\":\"").nth(1)).and_then(|x| x.split('"').next()).map(|s| s.replace("\\\\", "\\"));
+    j!({ "uuid": uuid, "queue": queue, "error": error.map(|e| e.lines().next().unwrap_or("").to_string()), "failed_at": at, "job": job })
+}
+
+/// État de la file Laravel d'un site : drivers « database » et « redis » (avec Horizon s'il est installé).
 async fn queue_state(site: &crate::config::Site) -> Result<Value> {
     let env = read_dotenv(&site.path);
     let conn = env.get("QUEUE_CONNECTION").cloned().unwrap_or_else(|| "sync".into());
     if !site.path.join("artisan").exists() {
         return Ok(j!({ "connection": null, "supported": false, "reason": "Pas un projet Laravel" }));
     }
-    if conn != "database" {
-        return Ok(j!({ "connection": conn, "supported": false,
-            "reason": match conn.as_str() { "sync" => "Les jobs s'exécutent tout de suite (QUEUE_CONNECTION=sync) : rien n'est mis en file.", "redis" => "File Redis : utilise Horizon pour la suivre.", _ => "Driver non suivi par Viherd." } }));
+    match conn.as_str() {
+        "database" => {}
+        "redis" => return redis_queue_state(site, &env).await,
+        "sync" => return Ok(j!({ "connection": conn, "supported": false, "reason": "Les jobs s'exécutent tout de suite (QUEUE_CONNECTION=sync) : rien n'est mis en file." })),
+        _ => return Ok(j!({ "connection": conn, "supported": false, "reason": "Driver non suivi par Viherd." })),
     }
-    let driver = env.get("DB_CONNECTION").map(String::as_str).unwrap_or("sqlite");
-    let (kind, svc) = match driver {
-        "pgsql" => (db::Kind::Pg, "postgres"),
-        "mysql" | "mariadb" => (db::Kind::My, "mysql"),
-        other => return Ok(j!({ "connection": conn, "supported": false, "reason": format!("Base « {other} » non prise en charge pour le suivi de la file.") })),
+    let (t, dbn) = match laravel_db(&env) {
+        Ok(x) => x,
+        Err(reason) => return Ok(j!({ "connection": conn, "supported": false, "reason": reason })),
     };
-    let port = env.get("DB_PORT").and_then(|p| p.parse().ok()).unwrap_or(if kind == db::Kind::Pg { 5432 } else { 3306 });
-    let t = db::Target { kind, svc: svc.into(), port };
-    let dbn = env.get("DB_DATABASE").cloned().unwrap_or_default();
-    let pending = db::run(&t, &dbn, "SELECT queue, COUNT(*), SUM(CASE WHEN reserved_at IS NULL THEN 0 ELSE 1 END) FROM jobs GROUP BY queue ORDER BY 2 DESC").await;
-    let pending = match pending {
+    let pending = match db::run(&t, &dbn, "SELECT queue, COUNT(*), SUM(CASE WHEN reserved_at IS NULL THEN 0 ELSE 1 END) FROM jobs GROUP BY queue ORDER BY 2 DESC").await {
         Ok(r) => r,
         Err(e) => return Ok(j!({ "connection": conn, "supported": false, "reason": format!("Base injoignable : {e}") })),
     };
-    let failed_n = db::run(&t, &dbn, "SELECT COUNT(*) FROM failed_jobs").await.ok()
-        .and_then(|r| r.rows.first().and_then(|x| x[0].clone())).and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
-    let recent = db::run(&t, &dbn, "SELECT uuid, queue, LEFT(exception, 400), failed_at, LEFT(payload, 600) FROM failed_jobs ORDER BY failed_at DESC LIMIT 8").await
-        .map(|r| r.rows).unwrap_or_default();
+    let (failed, recent_failed) = db_failed(&t, &dbn).await;
     let num = |v: &Option<String>| v.as_deref().and_then(|s| s.parse::<u64>().ok()).unwrap_or(0);
     Ok(j!({
-        "connection": conn, "supported": true, "database": dbn, "engine": svc,
+        "connection": conn, "supported": true, "database": dbn, "engine": t.svc,
         "queues": pending.rows.iter().map(|r| j!({ "queue": r[0], "pending": num(&r[1]), "running": num(&r[2]) })).collect::<Vec<_>>(),
-        "failed": failed_n,
-        "recent_failed": recent.iter().map(|r| {
-            // nom lisible du job à partir du payload JSON (displayName)
-            let job = r[4].as_deref().and_then(|p| p.split("\"displayName\":\"").nth(1)).and_then(|x| x.split('"').next()).map(|s| s.replace("\\\\", "\\"));
-            j!({ "uuid": r[0], "queue": r[1], "error": r[2].as_deref().map(|e| e.lines().next().unwrap_or("").to_string()), "failed_at": r[3], "job": job })
-        }).collect::<Vec<_>>(),
+        "failed": failed,
+        "recent_failed": recent_failed,
+    }))
+}
+
+/// File Redis : clés {prefix}queues:{nom} (liste en attente, :reserved en cours, :delayed différés).
+async fn redis_queue_state(site: &crate::config::Site, env: &std::collections::HashMap<String, String>) -> Result<Value> {
+    let get = |k: &str, d: &str| env.get(k).filter(|v| !v.is_empty() && v.as_str() != "null").cloned().unwrap_or_else(|| d.to_string());
+    let app = crate::redis::laravel_slug(&get("APP_NAME", "laravel"));
+    let prefix = env.get("REDIS_PREFIX").cloned().unwrap_or_else(|| format!("{app}_database_"));
+    let (host, port) = (get("REDIS_HOST", "127.0.0.1"), get("REDIS_PORT", "6379").parse().unwrap_or(6379));
+    let password = env.get("REDIS_PASSWORD").filter(|p| p.as_str() != "null").cloned();
+    let dbi: u32 = get("REDIS_DB", "0").parse().unwrap_or(0);
+    let mut c = match crate::redis::Conn::connect(&host, port, password.as_deref(), dbi).await {
+        Ok(c) => c,
+        Err(e) => return Ok(j!({ "connection": "redis", "supported": false, "reason": format!("{e:#} — active le service Redis dans Viherd.") })),
+    };
+    let qp = format!("{prefix}queues:");
+    let mut names: Vec<String> = c.cmd(&["KEYS", &format!("{qp}*")]).await?.list().iter()
+        .filter_map(|k| k.str()).filter_map(|k| k.strip_prefix(&qp))
+        .map(|q| q.trim_end_matches(":reserved").trim_end_matches(":delayed").trim_end_matches(":notify").to_string())
+        .collect();
+    names.push(get("REDIS_QUEUE", "default"));
+    names.sort();
+    names.dedup();
+    let mut queues = Vec::new();
+    for q in &names {
+        let base = format!("{qp}{q}");
+        let pending = c.cmd(&["LLEN", &base]).await?.int();
+        let running = c.cmd(&["ZCARD", &format!("{base}:reserved")]).await?.int();
+        let delayed = c.cmd(&["ZCARD", &format!("{base}:delayed")]).await?.int();
+        queues.push(j!({ "queue": q, "pending": pending, "running": running, "delayed": delayed }));
+    }
+    queues.sort_by_key(|q| -(q["pending"].as_i64().unwrap_or(0)));
+
+    // Horizon : ses propres clés ({app}_horizon:), état du master et jobs échoués
+    let horizon_installed = site.path.join("vendor").join("laravel").join("horizon").is_dir();
+    let mut horizon = j!({ "installed": horizon_installed });
+    let (mut failed, mut recent_failed) = (0u64, Vec::new());
+    if horizon_installed {
+        let hp = env.get("HORIZON_PREFIX").cloned().unwrap_or_else(|| format!("{app}_horizon:"));
+        let masters = c.cmd(&["SMEMBERS", &format!("{hp}masters")]).await.map(Reply::list).unwrap_or_default();
+        let paused = match masters.first().and_then(|r| r.str()) {
+            Some(name) => c.cmd(&["HGET", &format!("{hp}master:{name}"), "status"]).await.ok()
+                .is_some_and(|r| r.str() == Some("paused")),
+            None => false,
+        };
+        horizon["running"] = j!(!masters.is_empty());
+        horizon["paused"] = j!(paused);
+        failed = c.cmd(&["ZCARD", &format!("{hp}failed_jobs")]).await.map(|r| r.int() as u64).unwrap_or(0);
+        // scores négatifs : le plus récent en premier
+        for id in c.cmd(&["ZRANGE", &format!("{hp}failed_jobs"), "0", "7"]).await.map(Reply::list).unwrap_or_default() {
+            let Some(id) = id.str() else { continue };
+            let f = c.cmd(&["HMGET", &format!("{hp}{id}"), "queue", "exception", "failed_at", "payload"]).await?.list();
+            let s = |i: usize| f.get(i).and_then(|r| r.str());
+            let at = s(2).and_then(|t| t.split('.').next()?.parse::<i64>().ok())
+                .and_then(|t| chrono::DateTime::from_timestamp(t, 0)).map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string());
+            recent_failed.push(failed_json(Some(id), s(0), s(1), at.as_deref(), s(3)));
+        }
+    } else if let Ok((t, dbn)) = laravel_db(env) {
+        (failed, recent_failed) = db_failed(&t, &dbn).await;
+    }
+    Ok(j!({
+        "connection": "redis", "supported": true, "engine": "redis",
+        "database": format!("{host}:{port} · db {dbi}"),
+        "queues": queues, "failed": failed, "recent_failed": recent_failed, "horizon": horizon,
     }))
 }
 
@@ -555,6 +673,12 @@ fn installed(dir: &Path) -> Vec<String> {
     v
 }
 
+/// Adresse d'un site : https si sécurisé, avec le port s'il n'est pas standard.
+pub fn site_url(g: &Global, name: &str) -> String {
+    let (scheme, port, std) = if g.secured.contains(name) { ("https", g.https_port, 443) } else { ("http", g.http_port, 80) };
+    if port == std { format!("{scheme}://{name}.{}", g.tld) } else { format!("{scheme}://{name}.{}:{port}", g.tld) }
+}
+
 fn state(st: &State) -> Result<Response<Body>> {
     let g = st.global.read().unwrap().clone();
     let sites = st.sites.read().unwrap().clone();
@@ -570,6 +694,7 @@ fn state(st: &State) -> Result<Response<Body>> {
              "since": s.since, "last_exit": s.last_exit, "error": s.error })
     };
     let sites: Vec<Value> = sites.values().map(|s| {
+        let share_v = j!({ "state": job(&share::key(&s.name))["state"], "url": share::url_of(st, &s.name) });
         let mut wv = Vec::new();
         for w in &s.project.workers {
             let mut v = job(&daemon::worker_key(&s.name, &w.name));
@@ -582,7 +707,11 @@ fn state(st: &State) -> Result<Response<Body>> {
             "name": s.name,
             "php_running": php_active.contains(&s.path),
             "metrics": metrics.get(&s.name).cloned().unwrap_or_default(),
-            "url": if g.http_port == 80 { format!("http://{}.{}", s.name, g.tld) } else { format!("http://{}.{}:{}", s.name, g.tld, g.http_port) },
+            "url": site_url(&g, &s.name),
+            "secure": g.secured.contains(&s.name),
+            "share": share_v,
+            "xdebug": s.project.xdebug,
+            "php_ini": s.project.php_ini,
             "path": s.path.display().to_string(),
             "docroot": s.docroot().display().to_string(),
             "root": s.project.root,
@@ -617,6 +746,9 @@ fn state(st: &State) -> Result<Response<Body>> {
         "logs_dir": paths::logs().display().to_string(),
         "tld": g.tld,
         "http_port": g.http_port,
+        "https_port": g.https_port,
+        "ca_trusted": certs::trusted_cached(),
+        "ca_path": certs::ca_cert_path().display().to_string(),
         "smtp_port": g.smtp_port,
         "dump_port": g.dump_port,
         "dumps_enabled": g.dumps,
