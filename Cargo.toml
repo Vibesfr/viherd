@@ -1,6 +1,6 @@
 [package]
 name = "viherd"
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 description = "Environnement de dev local PHP/Node à la Laravel Herd, écrit en Rust"
 
