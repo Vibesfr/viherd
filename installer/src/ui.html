@@ -4,261 +4,362 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Viherd</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400..600&display=swap" rel="stylesheet">
 <!--
-  Interface de l'installeur : une page web ordinaire, à retoucher librement.
-  window.SETUP = { mode: "install" | "uninstall", version, dir, existing, data }
+  Interface de l'installeur Viherd (même fichier pour l'aperçu et pour WebView2).
+  window.SETUP = { mode: "install" | "uninstall", version, dir, existing, data, trusted }
   Vers Rust : window.ipc.postMessage(JSON.stringify({ cmd, ... }))
     cmd = drag | minimize | close | install {opts} | uninstall {opts} | launch {dir}
   Depuis Rust : onEvent({ step, label }) · onEvent({ done: true }) · onEvent({ error })
-  Ouverte dans un navigateur, la page simule l'installation (les boutons marchent).
+  Sans window.SETUP (navigateur), la page simule l'installation et affiche une barre de démo.
 -->
 <style>
-/* Mêmes tokens que l'appli (src/ui.html) : noir profond, gris neutres, blanc comme couleur d'action */
+/* Fenêtre 860×540 : en-tête · (panneau de marque + étapes | page) · pied d'actions.
+   Tokens identiques à l'appli (src/ui.html) : noir profond, gris neutres, blanc comme action. */
 :root {
   --bg: #000; --bg-1: #0a0a0a; --bg-2: #111; --bg-3: #171717; --bg-4: #262626;
   --line: #1f1f1f; --line-2: #262626; --line-3: #333; --line-4: #454545;
   --t1: #ededed; --t2: #a1a1a1; --t3: #737373; --t4: #525252;
   --pri: #ededed; --pri-t: #0a0a0a; --pri-h: #fff;
-  --green: #45c27a; --amber: #f5a524; --red: #f05252; --blue: #3b9eff;
-  --dot: rgba(255,255,255,.07);
+  --green: #45c27a; --amber: #f5a524; --red: #f05252;
+  --red-soft: rgba(240,82,82,.07); --red-line: rgba(240,82,82,.32);
+  --amber-soft: rgba(245,165,36,.08); --amber-line: rgba(245,165,36,.3);
+  --dot: rgba(255,255,255,.075);
+  --stage: #070707; --win-shadow: 0 0 0 1px #262626, 0 30px 80px rgba(0,0,0,.75);
   --font: "Geist", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   --mono: "Geist Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: light) {
-  :root {
+  :root:not([data-theme="dark"]) {
     --bg: #fafafa; --bg-1: #fff; --bg-2: #f5f5f5; --bg-3: #ededed; --bg-4: #e2e2e2;
     --line: #ededed; --line-2: #e5e5e5; --line-3: #d4d4d4; --line-4: #b5b5b5;
     --t1: #171717; --t2: #666; --t3: #8f8f8f; --t4: #b0b0b0;
     --pri: #171717; --pri-t: #fff; --pri-h: #000;
-    --green: #1f9d55; --amber: #c27c00; --red: #e5484d; --blue: #0a6fdb;
+    --green: #1f9d55; --amber: #c27c00; --red: #e5484d;
+    --red-soft: rgba(229,72,77,.05); --red-line: rgba(229,72,77,.32);
+    --amber-soft: rgba(194,124,0,.06); --amber-line: rgba(194,124,0,.3);
     --dot: rgba(0,0,0,.08);
+    --stage: #ececec; --win-shadow: 0 0 0 1px #dcdcdc, 0 30px 70px rgba(0,0,0,.14);
     color-scheme: light;
   }
 }
+:root[data-theme="light"] {
+  --bg: #fafafa; --bg-1: #fff; --bg-2: #f5f5f5; --bg-3: #ededed; --bg-4: #e2e2e2;
+  --line: #ededed; --line-2: #e5e5e5; --line-3: #d4d4d4; --line-4: #b5b5b5;
+  --t1: #171717; --t2: #666; --t3: #8f8f8f; --t4: #b0b0b0;
+  --pri: #171717; --pri-t: #fff; --pri-h: #000;
+  --green: #1f9d55; --amber: #c27c00; --red: #e5484d;
+  --red-soft: rgba(229,72,77,.05); --red-line: rgba(229,72,77,.32);
+  --amber-soft: rgba(194,124,0,.06); --amber-line: rgba(194,124,0,.3);
+  --dot: rgba(0,0,0,.08);
+  --stage: #ececec; --win-shadow: 0 0 0 1px #dcdcdc, 0 30px 70px rgba(0,0,0,.14);
+  color-scheme: light;
+}
+
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--t1); user-select: none; }
-body { font: 400 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; display: grid; grid-template-rows: 48px 1fr 64px; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--t1); }
+body { font: 400 14px/1.5 var(--font); -webkit-font-smoothing: antialiased; overflow: hidden; user-select: none; }
 button, input { font: inherit; color: inherit; }
 .mono { font-family: var(--mono); }
 .hl { font-family: var(--mono); font-size: 12.5px; color: var(--t1); }
-svg.i { width: 16px; height: 16px; flex: none; }
+svg.i { width: 16px; height: 16px; flex: none; display: block; }
+:focus-visible { outline: 2px solid var(--t2); outline-offset: 2px; border-radius: 6px; }
 
-/* ---------- en-tête ---------- */
-header { display: flex; align-items: center; gap: 12px; padding: 0 6px 0 16px; border-bottom: 1px solid var(--line); background: var(--bg); }
-.mk { width: 22px; height: 22px; border-radius: 50%; background: var(--t1); color: var(--bg); display: grid; place-items: center; }
+/* ---------- fenêtre ---------- */
+.win { position: relative; width: 100vw; height: 100vh; display: grid; grid-template-rows: 44px minmax(0, 1fr) 60px; background: var(--bg); overflow: hidden; }
+
+header { display: flex; align-items: center; gap: 10px; padding: 0 6px 0 14px; border-bottom: 1px solid var(--line); }
+.mk { width: 22px; height: 22px; border-radius: 6px; background: var(--pri); color: var(--pri-t); display: grid; place-items: center; flex: none; }
 .mk svg { width: 12px; height: 12px; }
 .sl { color: var(--line-4); font-size: 20px; font-weight: 200; margin: 0 -2px; }
-header b { font-weight: 500; font-size: 14px; }
+header b { font-weight: 500; font-size: 13.5px; white-space: nowrap; }
+#h-title { color: var(--t2); }
 .pill { font: 500 11px var(--mono); color: var(--t2); padding: 1px 7px; border: 1px solid var(--line-2); border-radius: 99px; }
 .dragsp { flex: 1; align-self: stretch; }
-.wb { all: unset; width: 40px; height: 32px; display: grid; place-items: center; border-radius: 6px; color: var(--t3); cursor: pointer; }
+.wb { all: unset; width: 38px; height: 30px; display: grid; place-items: center; border-radius: 6px; color: var(--t3); cursor: pointer; }
 .wb:hover { background: var(--bg-3); color: var(--t1); }
 .wb.x:hover { background: #c42b1c; color: #fff; }
 .wb[disabled] { opacity: .3; pointer-events: none; }
 .wb svg { width: 13px; height: 13px; }
 
-/* ---------- corps : fil d'étapes + contenu ---------- */
-.body { display: grid; grid-template-columns: 212px 1fr; min-height: 0; }
-nav { border-right: 1px solid var(--line); padding: 28px 20px; position: relative; }
-.stp { position: relative; display: flex; align-items: center; gap: 12px; height: 40px; color: var(--t3); font-size: 13.5px; transition: color .2s; }
-.stp + .stp::before { content: ""; position: absolute; left: 10px; top: -10px; height: 20px; width: 1px; background: var(--line-3); }
-.stp .n { position: relative; z-index: 1; width: 21px; height: 21px; border-radius: 50%; border: 1px solid var(--line-3); background: var(--bg); display: grid; place-items: center; font: 500 11px var(--mono); transition: all .2s; }
+.body { display: grid; grid-template-columns: 220px minmax(0, 1fr); min-height: 0; }
+
+/* panneau de marque : grille de points, étapes, monogramme */
+.side { position: relative; border-right: 1px solid var(--line); background: var(--bg-1); padding: 26px 20px; overflow: hidden; }
+.side::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 16px 16px; -webkit-mask-image: linear-gradient(to top, #000, transparent 75%); mask-image: linear-gradient(to top, #000, transparent 75%); pointer-events: none; }
+.side-k { position: relative; font: 500 11px var(--mono); color: var(--t3); letter-spacing: .06em; text-transform: uppercase; margin: 0 0 14px; }
+ol.steps { position: relative; list-style: none; margin: 0; padding: 0; }
+.stp { position: relative; display: flex; align-items: center; gap: 12px; height: 38px; color: var(--t3); font-size: 13.5px; transition: color .2s; }
+.stp + .stp::before { content: ""; position: absolute; left: 10px; top: -9px; height: 18px; width: 1px; background: var(--line-3); }
+.stp .n { position: relative; z-index: 1; width: 21px; height: 21px; border-radius: 50%; border: 1px solid var(--line-3); background: var(--bg-1); display: grid; place-items: center; font: 500 11px var(--mono); transition: all .2s; }
 .stp .n svg { width: 11px; height: 11px; }
 .stp.on { color: var(--t1); font-weight: 500; }
 .stp.on .n { border-color: var(--t1); color: var(--t1); box-shadow: 0 0 0 4px var(--bg-3); }
 .stp.ok { color: var(--t2); }
 .stp.ok .n { background: var(--t1); border-color: var(--t1); color: var(--bg); }
 .stp.bad .n { background: var(--red); border-color: var(--red); color: #fff; }
-.navf { position: absolute; left: 20px; right: 20px; bottom: 22px; font-size: 12px; color: var(--t3); line-height: 1.5; }
-.navf a { color: var(--t2); }
+.side-f { position: absolute; left: 20px; right: 20px; bottom: 20px; font-size: 12px; color: var(--t3); line-height: 1.5; }
 
+/* pages */
 main { position: relative; overflow: hidden; }
-main::before { content: ""; position: absolute; inset: 0; background-image: radial-gradient(var(--dot) 1px, transparent 1px); background-size: 20px 20px; mask-image: radial-gradient(ellipse 90% 70% at 70% 0%, #000 10%, transparent 70%); pointer-events: none; }
-.page { position: absolute; inset: 0; padding: 30px 36px 20px; display: flex; flex-direction: column; gap: 20px; opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity .25s ease, transform .3s ease; }
+.page { position: absolute; inset: 0; padding: 26px 32px 18px; display: flex; flex-direction: column; gap: 18px; opacity: 0; transform: translateY(4px); pointer-events: none; transition: opacity .25s ease, transform .3s ease; }
 .page.on { opacity: 1; transform: none; pointer-events: auto; }
-h1 { margin: 0; font-size: 30px; line-height: 1.15; font-weight: 600; letter-spacing: -.035em; }
-.lead { margin: 8px 0 0; color: var(--t2); max-width: 470px; line-height: 1.55; }
+h1 { margin: 0; font-size: 28px; line-height: 1.15; font-weight: 600; letter-spacing: -.035em; text-wrap: balance; }
+.lead { margin: 7px 0 0; color: var(--t2); max-width: 500px; line-height: 1.55; font-size: 13.5px; }
 
-/* cartes à bordure fine */
 .card { border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg-1); overflow: hidden; }
-.kv { display: grid; grid-template-columns: 120px 1fr; align-items: center; gap: 16px; padding: 10px 16px; font-size: 13px; }
+.card-h { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-bottom: 1px solid var(--line); background: var(--bg); font-size: 12px; color: var(--t3); }
+.card-h .sp { flex: 1; }
+
+/* aperçu des sites */
+.site { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 10px; height: 38px; padding: 0 14px; font-size: 13px; }
+.site + .site { border-top: 1px solid var(--line); }
+.site .dt { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 18%, transparent); }
+.site .nm { display: flex; align-items: center; gap: 7px; min-width: 0; font: 13px var(--mono); }
+.site .nm svg { width: 12px; height: 12px; color: var(--t3); }
+.site .nm .sch { color: var(--t4); }
+.chips { display: flex; gap: 6px; }
+.chip { font: 500 11px var(--mono); color: var(--t2); padding: 1px 7px; border-radius: 5px; background: var(--bg-3); border: 1px solid var(--line-2); white-space: nowrap; }
+.chip.w { color: var(--t3); background: transparent; }
+
+.kv { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 14px; padding: 9px 14px; font-size: 13px; }
 .kv + .kv { border-top: 1px solid var(--line); }
 .kv .k { color: var(--t3); }
-.kv .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: flex; align-items: center; gap: 8px; }
-.kv .v .ln { all: unset; cursor: pointer; color: var(--t3); font-size: 12px; margin-left: auto; padding: 1px 6px; border-radius: 5px; }
-.kv .v .ln:hover { color: var(--t1); background: var(--bg-3); }
-
-.feats { display: grid; grid-template-columns: repeat(3, 1fr); }
-.feats > div { padding: 14px 16px; display: grid; gap: 6px; align-content: start; }
-.feats > div + div { border-left: 1px solid var(--line); }
-.feats svg { color: var(--t2); }
-.feats b { font-weight: 500; font-size: 13px; }
-.feats span { color: var(--t3); font-size: 12.5px; line-height: 1.45; }
+.kv .v { min-width: 0; display: flex; align-items: center; gap: 8px; }
+.kv .v .tx { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ln { all: unset; cursor: pointer; color: var(--t3); font-size: 12px; margin-left: auto; padding: 1px 7px; border-radius: 5px; flex: none; }
+.ln:hover { color: var(--t1); background: var(--bg-3); }
 
 /* formulaire */
-.field { display: grid; gap: 8px; }
-.lbl { font-size: 13px; color: var(--t2); font-weight: 500; }
-.inp { display: flex; align-items: center; height: 40px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg-1); overflow: hidden; transition: border-color .15s, box-shadow .15s; }
+.field { display: grid; gap: 7px; }
+.lbl { font-size: 12.5px; color: var(--t2); font-weight: 500; }
+.inp { display: flex; align-items: center; height: 38px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg-1); overflow: hidden; transition: border-color .15s, box-shadow .15s; }
 .inp:focus-within { border-color: var(--line-4); box-shadow: 0 0 0 3px rgba(127,127,127,.18); }
-.inp .pre { height: 100%; display: grid; place-items: center; padding: 0 12px; border-right: 1px solid var(--line-2); background: var(--bg-2); color: var(--t3); }
-.inp input { all: unset; flex: 1; min-width: 0; padding: 0 12px; font: 13px var(--mono); user-select: text; }
+.inp .pre { height: 100%; display: grid; place-items: center; padding: 0 11px; border-right: 1px solid var(--line-2); background: var(--bg-2); color: var(--t3); }
+.inp input { all: unset; flex: 1; min-width: 0; padding: 0 12px; font: 12.5px var(--mono); user-select: text; }
 .inp button { all: unset; cursor: pointer; font-size: 12.5px; color: var(--t2); padding: 0 12px; height: 100%; border-left: 1px solid var(--line-2); }
 .inp button:hover { color: var(--t1); background: var(--bg-2); }
-.row { display: flex; align-items: center; gap: 14px; padding: 11px 16px; cursor: pointer; }
+.row { display: flex; align-items: center; gap: 14px; padding: 9px 14px; cursor: pointer; }
 .row + .row { border-top: 1px solid var(--line); }
 .row:hover { background: var(--bg-2); }
 .row .rt { flex: 1; min-width: 0; }
 .row .rt > b { display: block; font-weight: 500; font-size: 13.5px; }
 .row .rt > span { display: block; color: var(--t3); font-size: 12.5px; }
-.row input { display: none; }
+.row input { position: absolute; opacity: 0; pointer-events: none; }
 .sw { position: relative; flex: none; width: 32px; height: 18px; border-radius: 99px; background: var(--bg-4); border: 1px solid var(--line-3); transition: background .2s, border-color .2s; }
 .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: var(--t3); transition: transform .2s ease, background .2s; }
 .row input:checked + .sw { background: var(--t1); border-color: var(--t1); }
 .row input:checked + .sw::after { transform: translateX(14px); background: var(--bg); }
+.row input:focus-visible + .sw { outline: 2px solid var(--t2); outline-offset: 2px; }
 .row.danger input:checked + .sw { background: var(--red); border-color: var(--red); }
 .row.danger input:checked + .sw::after { background: #fff; }
 
-/* statut façon déploiement */
-.status { display: flex; align-items: center; gap: 24px; }
-.status > div { display: grid; gap: 2px; }
-.status .k { font-size: 12px; color: var(--t3); }
-.status .v { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
-.sdot { width: 9px; height: 9px; border-radius: 50%; background: var(--amber); position: relative; }
+.callout { display: flex; gap: 10px; padding: 11px 14px; border-radius: 10px; font-size: 12.5px; line-height: 1.5; }
+.callout svg { width: 15px; height: 15px; margin-top: 1px; }
+.callout.red { background: var(--red-soft); border: 1px solid var(--red-line); color: var(--t1); }
+.callout.red svg { color: var(--red); }
+.callout .m { font-family: var(--mono); font-size: 12px; color: var(--t2); display: block; margin-top: 2px; white-space: pre-wrap; user-select: text; }
+
+/* progression */
+.prog-top { display: flex; align-items: flex-end; gap: 18px; }
+.big { font: 600 44px/1 var(--mono); letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.big small { font-size: 20px; color: var(--t3); margin-left: 2px; }
+.prog-top .tt { flex: 1; min-width: 0; padding-bottom: 4px; }
+.prog-top .tt b { display: flex; align-items: center; gap: 8px; font-weight: 500; font-size: 14px; }
+.prog-top .tt span { display: block; font-size: 12.5px; color: var(--t3); }
+.prog-top .tm { font: 12.5px var(--mono); color: var(--t3); padding-bottom: 5px; font-variant-numeric: tabular-nums; }
+.sdot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); position: relative; flex: none; }
 .sdot.run::after { content: ""; position: absolute; inset: -4px; border-radius: 50%; border: 1px solid var(--amber); animation: ping 1.4s ease-out infinite; }
 .sdot.ok { background: var(--green); }
 .sdot.err { background: var(--red); }
 @keyframes ping { from { transform: scale(.6); opacity: 1; } to { transform: scale(1.6); opacity: 0; } }
 
-/* journal */
-.log { flex: 1; min-height: 0; display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg-1); overflow: hidden; }
-.log-h { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 14px; border-bottom: 1px solid var(--line); font-size: 12.5px; color: var(--t2); position: relative; }
-.log-h .sp { flex: 1; }
-.log-h .pc { font: 12px var(--mono); color: var(--t3); }
-.prog { position: absolute; left: 0; bottom: -1px; height: 1px; width: 0; background: var(--t1); transition: width .5s ease; }
-.log-b { flex: 1; overflow: auto; padding: 8px 0; font: 12.5px/1.75 var(--mono); user-select: text; }
-.ll { display: grid; grid-template-columns: 96px 18px 1fr; gap: 6px; padding: 0 14px; color: var(--t2); animation: in .25s ease; }
-.ll .ts { color: var(--t4); }
-.ll .ic { display: grid; place-items: center; }
-.ll .ic svg { width: 12px; height: 12px; }
-.ll.run { color: var(--t1); }
-.ll.run .ic::before { content: ""; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--t3); border-top-color: var(--t1); animation: spin .7s linear infinite; }
-.ll.ok .ic { color: var(--green); }
-.ll.err { color: var(--red); }
-.ll.err .ic { color: var(--red); }
-.ll.msg { white-space: pre-wrap; }
-.ll.dim { color: var(--t3); }
+.segs { display: flex; gap: 4px; height: 4px; }
+.segs i { flex: 1; border-radius: 2px; background: var(--bg-4); position: relative; overflow: hidden; }
+.segs i.ok, .segs i.warn { background: var(--t1); }
+.segs i.warn { background: var(--amber); }
+.segs i.err { background: var(--red); }
+.segs i.run::after { content: ""; position: absolute; inset: 0; width: 40%; background: var(--t2); animation: slide 1s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+
+ul.plan { list-style: none; margin: 0; padding: 4px 0; }
+.plan-c { flex: 0 1 auto; min-height: 0; overflow: auto; }
+.st { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto; align-items: center; gap: 10px; height: 29px; padding: 0 14px; font-size: 13px; color: var(--t3); }
+.st .ic { display: grid; place-items: center; }
+.st .ic svg { width: 12px; height: 12px; }
+.st .ic::before { content: ""; width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--line-4); }
+.st.run, .st.ok { color: var(--t1); }
+.st.ok { color: var(--t2); }
+.st.ok .ic, .st.err .ic, .st.warn .ic { color: var(--green); }
+.st.ok .ic::before, .st.err .ic::before, .st.warn .ic::before { display: none; }
+.st.run .ic::before { width: 10px; height: 10px; border: 1.5px solid var(--line-4); border-top-color: var(--t1); animation: spin .7s linear infinite; }
+.st.err { color: var(--red); } .st.err .ic { color: var(--red); }
+.st.warn { color: var(--t1); } .st.warn .ic { color: var(--amber); }
+.st .lb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.st .du { font: 11.5px var(--mono); color: var(--t4); font-variant-numeric: tabular-nums; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@keyframes in { from { opacity: 0; transform: translateY(2px); } }
+
+.logbtn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--t3); }
+.logbtn:hover { color: var(--t1); }
+.logbtn svg { width: 12px; height: 12px; transition: transform .2s; }
+.logbtn[aria-expanded="true"] svg { transform: rotate(90deg); }
+.log { position: absolute; left: 32px; right: 32px; bottom: 14px; height: 170px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--bg-1); box-shadow: 0 -12px 30px var(--bg); overflow: auto; padding: 8px 0; font: 12px/1.75 var(--mono); user-select: text; }
+.ll { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 8px; padding: 0 14px; color: var(--t2); }
+.ll .ts { color: var(--t4); }
+.ll.err { color: var(--red); } .ll.warn { color: var(--amber); } .ll.ok { color: var(--green); } .ll.dim { color: var(--t3); }
+.ll span:last-child { white-space: pre-wrap; }
 
 /* fin */
-.cmds .c { display: flex; align-items: center; gap: 10px; padding: 9px 8px 9px 16px; font: 12.5px var(--mono); }
+.done-hd { display: flex; align-items: center; gap: 16px; }
+.okmark { width: 46px; height: 46px; border-radius: 50%; background: var(--t1); color: var(--bg); display: grid; place-items: center; flex: none; animation: pop .45s cubic-bezier(.2,1.4,.4,1); }
+.okmark svg { width: 22px; height: 22px; }
+@keyframes pop { from { transform: scale(.6); opacity: 0; } }
+.meta { display: flex; gap: 22px; font-size: 12px; color: var(--t3); }
+.meta b { display: block; font: 500 12.5px var(--mono); color: var(--t1); max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmds .c { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto 28px; align-items: center; gap: 10px; padding: 7px 8px 7px 14px; font: 12.5px var(--mono); }
 .cmds .c + .c { border-top: 1px solid var(--line); }
 .cmds .c i { font-style: normal; color: var(--t4); }
-.cmds .c span { flex: 1; user-select: text; }
+.cmds .c span { user-select: text; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmds .c em { font: 12px var(--font); font-style: normal; color: var(--t3); white-space: nowrap; }
 .cmds .c button { all: unset; cursor: pointer; width: 28px; height: 26px; display: grid; place-items: center; border-radius: 6px; color: var(--t3); }
 .cmds .c button:hover { background: var(--bg-3); color: var(--t1); }
 .cmds .c button svg { width: 14px; height: 14px; }
 .check { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; color: var(--t2); font-size: 13px; }
-.check input { display: none; }
+.check input { position: absolute; opacity: 0; pointer-events: none; }
 .check .bx { width: 16px; height: 16px; border-radius: 4px; border: 1px solid var(--line-4); display: grid; place-items: center; }
 .check .bx svg { width: 10px; height: 10px; opacity: 0; color: var(--bg); }
 .check input:checked + .bx { background: var(--t1); border-color: var(--t1); }
 .check input:checked + .bx svg { opacity: 1; }
+.check input:focus-visible + .bx { outline: 2px solid var(--t2); outline-offset: 2px; }
 
 /* pied */
-footer { display: flex; align-items: center; gap: 10px; padding: 0 16px 0 20px; border-top: 1px solid var(--line); background: var(--bg); }
+footer { display: flex; align-items: center; gap: 10px; padding: 0 14px 0 20px; border-top: 1px solid var(--line); }
 footer .note { flex: 1; min-width: 0; color: var(--t3); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.b { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--bg-1); font-weight: 500; font-size: 14px; white-space: nowrap; transition: background .15s, border-color .15s, opacity .15s; }
+.b { all: unset; box-sizing: border-box; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--bg-1); font-weight: 500; font-size: 13.5px; white-space: nowrap; transition: background .15s, border-color .15s, opacity .15s; }
 .b:hover { border-color: var(--line-4); }
-.b.pri { background: var(--pri); color: var(--pri-t); border-color: var(--pri); min-width: 108px; }
+.b.pri { background: var(--pri); color: var(--pri-t); border-color: var(--pri); min-width: 112px; }
 .b.pri:hover { background: var(--pri-h); }
 .b.danger { background: var(--red); border-color: var(--red); color: #fff; }
 .b.danger:hover { filter: brightness(1.08); }
 .b[disabled] { opacity: .4; pointer-events: none; }
-.b[hidden] { display: none; }
-kbd { font: 500 11px var(--mono); padding: 0 5px; border-radius: 4px; border: 1px solid currentColor; opacity: .45; }
+.b svg { width: 14px; height: 14px; }
+
+/* ---------- aperçu dans un navigateur (sans window.SETUP) ---------- */
+body.demo { overflow: auto; background: var(--stage); }
+.stage { display: none; }
+body.demo .stage { display: grid; gap: 14px; justify-items: center; padding-block: 28px 40px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+body.demo .frame { position: relative; width: 860px; height: 540px; }
+body.demo .win { position: absolute; top: 0; left: 0; width: 860px; height: 540px; border-radius: 10px; box-shadow: var(--win-shadow); transform-origin: top left; }
+.demo-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px 18px; font-size: 13px; color: var(--t2); }
+.segctl { display: inline-flex; padding: 3px; border-radius: 9px; border: 1px solid var(--line-2); background: var(--bg-1); }
+.segctl button { all: unset; cursor: pointer; padding: 4px 12px; border-radius: 6px; color: var(--t2); font-size: 13px; }
+.segctl button:hover { color: var(--t1); }
+.segctl button.on { background: var(--bg-3); color: var(--t1); box-shadow: 0 0 0 1px var(--line-3); }
+.demo-cap { margin: 0; font-size: 12.5px; color: var(--t3); text-align: center; max-width: 60ch; }
+.toast { position: absolute; left: 50%; bottom: 74px; transform: translateX(-50%); padding: 8px 14px; border-radius: 8px; background: var(--t1); color: var(--bg); font-size: 12.5px; font-weight: 500; white-space: nowrap; z-index: 5; animation: pop .3s ease; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>
 </head>
 <body>
-  <header onmousedown="if(!event.target.closest('button'))send('drag')">
+
+<div class="stage" id="stage">
+  <div class="demo-bar">
+    <div class="segctl" role="tablist" aria-label="Scénario">
+      <button type="button" id="d-install" data-m="install" class="on">Installation</button>
+      <button type="button" id="d-update" data-m="update">Mise à jour</button>
+      <button type="button" id="d-uninstall" data-m="uninstall">Désinstallation</button>
+    </div>
+    <label class="check"><input type="checkbox" id="d-fail"><span class="bx" data-i="check"></span>Simuler une erreur</label>
+    <label class="check"><input type="checkbox" id="d-trusted"><span class="bx" data-i="check"></span>HTTPS déjà approuvé</label>
+  </div>
+  <div class="frame" id="frame"></div>
+  <p class="demo-cap">Aperçu interactif de la fenêtre 860 × 540 : les boutons marchent, l'installation est simulée.</p>
+</div>
+
+<div class="win" id="win">
+  <header id="hdr">
     <span class="mk"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"><path d="m4.5 5.5 7.5 13 7.5-13"/></svg></span>
-    <b>Viherd</b><span class="sl">/</span><b id="h-title" style="color:var(--t2)">Installation</b><span class="pill" id="ver"></span>
+    <b>Viherd</b><span class="sl">/</span><b id="h-title">Installation</b><span class="pill" id="ver"></span>
     <span class="dragsp"></span>
-    <button class="wb" title="Réduire" onclick="send('minimize')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 12h14"/></svg></button>
-    <button class="wb x" id="close" title="Fermer" onclick="send('close')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+    <button class="wb" type="button" title="Réduire" onclick="send('minimize')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M5 12h14"/></svg></button>
+    <button class="wb x" type="button" id="close" title="Fermer" onclick="send('close')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
   </header>
 
   <div class="body">
-    <nav onmousedown="send('drag')">
-      <div id="stepper"></div>
-      <div class="navf" id="navf"></div>
-    </nav>
+    <aside class="side" id="side">
+      <p class="side-k">Étapes</p>
+      <ol class="steps" id="stepper"></ol>
+      <div class="side-f" id="side-f"></div>
+    </aside>
 
     <main>
       <!-- accueil -->
       <section class="page" id="p-welcome">
         <div><h1 id="w-title">Installer Viherd</h1>
-          <p class="lead" id="w-lead">L'environnement de dev PHP &amp; Node pour Windows : sites <span class="hl">*.test</span>, versions isolées par projet, services et HTTPS, dans une seule appli.</p></div>
+          <p class="lead" id="w-lead"></p></div>
         <div class="card">
-          <div class="kv"><span class="k">Destination</span><span class="v mono"><span id="w-dir" style="overflow:hidden;text-overflow:ellipsis"></span><button class="ln" onclick="go('options')">Modifier</button></span></div>
-          <div class="kv"><span class="k">Contenu</span><span class="v"><span class="hl">viherd-app.exe</span><span style="color:var(--t4)">·</span><span class="hl">viherd.exe</span></span></div>
-          <div class="kv"><span class="k">Droits</span><span class="v">Ton compte uniquement, sans administrateur</span></div>
+          <div class="card-h"><span>Chaque dossier devient un site</span><span class="sp"></span><span class="mono">~\Sites</span></div>
+          <div class="site"><i class="dt"></i><span class="nm"><span data-i="lock"></span><span><span class="sch">https://</span>boutique.test</span></span><span class="chips"><span class="chip">PHP 8.4</span><span class="chip">Node 22</span><span class="chip w">queue · vite</span></span></div>
+          <div class="site"><i class="dt"></i><span class="nm"><span data-i="lock"></span><span><span class="sch">https://</span>api.test</span></span><span class="chips"><span class="chip">PHP 8.3</span><span class="chip w">reverb · horizon</span></span></div>
+          <div class="site"><i class="dt"></i><span class="nm"><span data-i="globe"></span><span><span class="sch">http://</span>docs.test</span></span><span class="chips"><span class="chip">Node 24</span><span class="chip w">proxy :3000</span></span></div>
         </div>
-        <div class="card feats">
-          <div><span data-i="globe"></span><b>Sites locaux</b><span>Chaque dossier devient nom.test, en HTTP ou HTTPS.</span></div>
-          <div><span data-i="layers"></span><b>Versions isolées</b><span>PHP et Node par projet, MySQL, PostgreSQL, Redis.</span></div>
-          <div><span data-i="bolt"></span><b>Workers &amp; debug</b><span>Queues, Horizon, Reverb, dumps, mails, Xdebug.</span></div>
+        <div class="card">
+          <div class="kv"><span class="k">Destination</span><span class="v mono"><span class="tx" id="w-dir"></span><button class="ln" type="button" onclick="go('options')">Modifier</button></span></div>
+          <div class="kv"><span class="k">Droits</span><span class="v"><span class="tx">Ton compte uniquement, sans administrateur</span></span></div>
         </div>
       </section>
 
       <!-- options -->
       <section class="page" id="p-options">
         <div><h1>Options</h1><p class="lead">Tout se change plus tard depuis Viherd.</p></div>
-        <div class="field"><span class="lbl">Dossier d'installation</span>
-          <label class="inp"><span class="pre" data-i="folder"></span><input id="dir" spellcheck="false"><button onclick="$('dir').value=S.dir">Par défaut</button></label></div>
+        <div class="field"><label class="lbl" for="dir">Dossier d'installation</label>
+          <div class="inp"><span class="pre" data-i="folder"></span><input id="dir" spellcheck="false"><button type="button" onclick="$('dir').value=S.dir">Par défaut</button></div></div>
         <div class="card">
           <label class="row"><span class="rt"><b>Commande <span class="hl">viherd</span></b><span>Ajoutée au PATH de ton compte</span></span><input type="checkbox" id="o-path" checked><i class="sw"></i></label>
           <label class="row"><span class="rt"><b>Raccourci sur le Bureau</b><span>Le menu Démarrer est toujours ajouté</span></span><input type="checkbox" id="o-desktop" checked><i class="sw"></i></label>
           <label class="row"><span class="rt"><b>Lancer avec Windows</b><span>Tes sites sont prêts dès l'ouverture de session</span></span><input type="checkbox" id="o-autostart"><i class="sw"></i></label>
-          <label class="row"><span class="rt"><b>Approuver le HTTPS local</b><span id="o-https-sub">Windows te demandera une seule fois de confirmer l'autorité Viherd</span></span><input type="checkbox" id="o-https" checked><i class="sw"></i></label>
+          <label class="row"><span class="rt"><b>Approuver le HTTPS local</b><span id="o-https-sub"></span></span><input type="checkbox" id="o-https" checked><i class="sw"></i></label>
         </div>
       </section>
 
       <!-- désinstallation -->
       <section class="page" id="p-uninstall">
         <div><h1>Désinstaller Viherd</h1>
-          <p class="lead">L'appli, ses raccourcis, la commande <span class="hl">viherd</span> et le démarrage automatique sont retirés. Tes projets ne sont jamais touchés.</p></div>
+          <p class="lead">L'appli, ses raccourcis, la commande <span class="hl">viherd</span>, le démarrage automatique et l'autorité HTTPS sont retirés. Tes projets ne sont jamais touchés.</p></div>
         <div class="card">
-          <div class="kv"><span class="k">Dossier</span><span class="v mono" id="u-dir"></span></div>
-          <div class="kv"><span class="k">Données</span><span class="v mono" id="u-data"></span></div>
+          <div class="kv"><span class="k">Dossier</span><span class="v mono"><span class="tx" id="u-dir"></span></span></div>
+          <div class="kv"><span class="k">Données</span><span class="v mono"><span class="tx" id="u-data"></span></span></div>
         </div>
         <div class="card">
           <label class="row danger"><span class="rt"><b>Supprimer aussi les données</b><span>Versions de PHP et Node, bases de données, logs, certificats</span></span><input type="checkbox" id="o-data"><i class="sw"></i></label>
         </div>
+        <div class="callout red" id="u-warn" hidden><span data-i="alert"></span><span>Les bases MySQL, PostgreSQL et Redis de <b>tous</b> tes projets seront effacées. Fais une sauvegarde depuis Viherd avant si tu en as besoin.</span></div>
       </section>
 
       <!-- progression -->
       <section class="page" id="p-progress">
-        <div class="status">
-          <div><span class="k">Statut</span><span class="v"><i class="sdot run" id="s-dot"></i><span id="s-txt">Building</span></span></div>
-          <div><span class="k">Durée</span><span class="v mono" id="s-time">0.0s</span></div>
-          <div><span class="k">Version</span><span class="v mono" id="s-ver"></span></div>
+        <div class="prog-top">
+          <span class="big" id="pct">0<small>%</small></span>
+          <div class="tt"><b><i class="sdot run" id="s-dot"></i><span id="p-title">Installation en cours</span></b><span id="p-sub">Ne ferme pas cette fenêtre.</span></div>
+          <span class="tm" id="s-time">0.0s</span>
         </div>
-        <div class="log">
-          <div class="log-h"><span data-i="term"></span><span id="log-t">Journal d'installation</span><span class="sp"></span><span class="pc" id="pct">0%</span><i class="prog" id="prog"></i></div>
-          <div class="log-b" id="log"></div>
-        </div>
+        <div class="segs" id="segs"></div>
+        <div class="card plan-c"><ul class="plan" id="plan"></ul></div>
+        <div class="callout red" id="err" hidden><span data-i="alert"></span><span>Rien n'est cassé : corrige le problème puis réessaie.<span class="m" id="err-msg"></span></span></div>
+        <div><button class="logbtn" type="button" id="logbtn" aria-expanded="false"><span data-i="chev"></span>Journal détaillé</button></div>
+        <div class="log" id="log" hidden></div>
       </section>
 
       <!-- fin -->
       <section class="page" id="p-done">
-        <div class="status">
-          <div><span class="k">Statut</span><span class="v"><i class="sdot ok"></i>Ready</span></div>
-          <div><span class="k">Durée</span><span class="v mono" id="d-time"></span></div>
-          <div><span class="k">Dossier</span><span class="v mono" id="d-dir" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span></div>
-        </div>
-        <div><h1 id="d-title">Viherd est installé.</h1><p class="lead" id="d-lead">Il vit dans la barre des tâches : fermer la fenêtre le garde actif. Pour commencer, dans un nouveau terminal :</p></div>
+        <div class="done-hd"><span class="okmark" data-i="check"></span>
+          <div><h1 id="d-title">Viherd est installé.</h1><p class="lead" id="d-lead" style="margin-top:4px"></p></div></div>
+        <div class="meta"><div>Dossier<b id="d-dir"></b></div><div>Durée<b id="d-time"></b></div><div>Version<b id="d-ver"></b></div></div>
         <div class="card cmds" id="d-cmds"></div>
         <label class="check" id="d-launch"><input type="checkbox" id="o-launch" checked><span class="bx" data-i="check"></span>Lancer Viherd maintenant</label>
       </section>
@@ -267,145 +368,229 @@ kbd { font: 500 11px var(--mono); padding: 0 5px; border-radius: 4px; border: 1p
 
   <footer>
     <span class="note" id="note"></span>
-    <button class="b" id="b-alt"></button>
-    <button class="b pri" id="b-main"></button>
+    <button class="b" type="button" id="b-alt"></button>
+    <button class="b pri" type="button" id="b-main"></button>
   </footer>
+</div>
 
 <script>
-const DEMO = !window.SETUP;
-const S = window.SETUP || { mode: 'install', version: '0.1.0', dir: 'C:\\Users\\moi\\AppData\\Local\\Programs\\Viherd', existing: null, data: 'C:\\Users\\moi\\.viherd' };
 const $ = id => document.getElementById(id);
+const DEMO = !window.SETUP;
+const DEMO_SETUP = { mode: 'install', version: '0.1.0', dir: 'C:\\Users\\moi\\AppData\\Local\\Programs\\Viherd', existing: null, data: 'C:\\Users\\moi\\.viherd', trusted: false };
+let S = window.SETUP || { ...DEMO_SETUP };
 const send = (cmd, extra = {}) => { if (window.ipc) window.ipc.postMessage(JSON.stringify({ cmd, ...extra })); else if (DEMO) demo(cmd, extra); };
+
 const I = {
   check: '<path d="m5 12.5 4.5 4.5L19 7.5"/>', x: '<path d="M6 6l12 12M18 6 6 18"/>',
   globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
-  layers: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>',
-  bolt: '<path d="M13 3 5 14h6l-1 7 8-11h-6z"/>',
+  lock: '<rect x="5" y="10.5" width="14" height="10" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/>',
   folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
-  term: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/>',
-  arrow: '<path d="M5 12h14M13 6l6 6-6 6"/>',
+  alert: '<path d="M12 3.5 2.5 20h19z"/><path d="M12 10v4.5M12 17.2v.1"/>',
+  chev: '<path d="m9 6 6 6-6 6"/>', retry: '<path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M4 4v4h4"/>',
 };
 const svg = (n, sw = 1.6) => `<svg class="i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${I[n]}</svg>`;
-document.querySelectorAll('[data-i]').forEach(e => e.innerHTML = svg(e.dataset.i, e.dataset.i === 'check' ? 3.4 : 1.6));
+document.querySelectorAll('[data-i]').forEach(e => e.innerHTML = svg(e.dataset.i, e.dataset.i === 'check' ? 3.2 : 1.6));
 
-const install = S.mode === 'install', up = !!S.existing;
-const STEPS = install ? [['welcome', 'Bienvenue'], ['options', 'Options'], ['progress', up ? 'Mise à jour' : 'Installation'], ['done', 'Terminé']]
-                      : [['uninstall', 'Confirmation'], ['progress', 'Désinstallation'], ['done', 'Terminé']];
-$('stepper').innerHTML = STEPS.map(([k, l], i) => `<div class="stp" data-k="${k}"><span class="n">${i + 1}</span>${l}</div>`).join('');
-$('navf').innerHTML = install ? 'Viherd s\'installe pour ton compte Windows. Rien n\'est envoyé sur Internet.' : 'Tes projets ne sont jamais supprimés.';
-$('ver').textContent = 'v' + S.version; $('s-ver').textContent = 'v' + S.version;
-$('h-title').textContent = install ? (up ? 'Mise à jour' : 'Installation') : 'Désinstallation';
+let install, up, STEPS, page = null, failed = false, plan = [], t0 = 0, timer = null, run = 0;
 
-let page = null, failed = false;
+function boot() {
+  install = S.mode === 'install'; up = !!S.existing; failed = false; run++; clearInterval(timer);
+  STEPS = install ? [['welcome', 'Bienvenue'], ['options', 'Options'], ['progress', up ? 'Mise à jour' : 'Installation'], ['done', 'Terminé']]
+                  : [['uninstall', 'Confirmation'], ['progress', 'Désinstallation'], ['done', 'Terminé']];
+  $('stepper').innerHTML = STEPS.map(([k, l], i) => `<li class="stp" data-k="${k}"><span class="n">${i + 1}</span><span>${l}</span></li>`).join('');
+  $('side-f').textContent = install ? 'Installé pour ton compte Windows. Rien n\'est envoyé sur Internet.' : 'Tes projets ne sont jamais supprimés.';
+  $('ver').textContent = 'v' + S.version;
+  $('h-title').textContent = install ? (up ? 'Mise à jour' : 'Installation') : 'Désinstallation';
+  $('dir').value = S.dir;
+  $('o-https-sub').textContent = S.trusted ? 'Déjà approuvé sur ce compte : rien à confirmer' : 'Windows te demandera une seule fois de confirmer l\'autorité Viherd';
+  $('u-dir').textContent = S.existing || S.dir; $('u-data').textContent = S.data;
+  $('o-data').checked = false; $('u-warn').hidden = true;
+  $('w-title').textContent = up ? 'Mettre à jour Viherd' : 'Installer Viherd';
+  $('w-lead').innerHTML = up
+    ? 'Viherd est arrêté le temps de la mise à jour. Sites, workers, bases et réglages sont conservés.'
+    : 'L\'environnement de dev PHP &amp; Node pour Windows : sites <span class="hl">*.test</span>, versions isolées par projet, services et HTTPS, dans une seule appli.';
+  setLog(false);
+  go(install ? 'welcome' : 'uninstall');
+}
+
 function go(id) {
   page = id;
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('on', p.id === 'p-' + id));
   const idx = STEPS.findIndex(([k]) => k === id);
   document.querySelectorAll('.stp').forEach((s, i) => {
-    const done = i < idx || (id === 'done');
-    s.className = 'stp' + (i === idx && id !== 'done' ? ' on' : '') + (done ? ' ok' : '') + (failed && i === idx ? ' bad' : '');
-    s.querySelector('.n').innerHTML = done ? svg('check', 3) : failed && i === idx ? svg('x', 3) : i + 1;
+    const done = i < idx || id === 'done', bad = failed && i === idx;
+    s.className = 'stp' + (i === idx && id !== 'done' ? ' on' : '') + (done ? ' ok' : '') + (bad ? ' bad' : '');
+    s.querySelector('.n').innerHTML = done ? svg('check', 3) : bad ? svg('x', 3) : i + 1;
   });
   if (id === 'welcome') $('w-dir').textContent = $('dir').value.trim() || S.dir;
   foot();
 }
+
 function foot() {
   const m = $('b-main'), a = $('b-alt'), n = $('note');
   m.hidden = a.hidden = false; m.disabled = a.disabled = false; m.className = 'b pri'; n.textContent = '';
   const verb = up ? 'Mettre à jour' : 'Installer';
-  if (page === 'welcome') { m.textContent = verb; a.textContent = 'Options'; n.textContent = up ? 'Installation existante détectée : tes réglages sont conservés.' : ''; }
+  if (page === 'welcome') { m.textContent = verb; a.textContent = 'Options'; n.textContent = up ? 'Installation existante détectée : tes réglages sont conservés.' : 'Environ 40 Mo, sans redémarrage.'; }
   else if (page === 'options') { m.textContent = verb; a.textContent = 'Retour'; }
-  else if (page === 'uninstall') { m.className = 'b danger'; m.textContent = 'Désinstaller'; a.textContent = 'Annuler'; }
+  else if (page === 'uninstall') { m.className = 'b danger'; m.textContent = $('o-data').checked ? 'Tout supprimer' : 'Désinstaller'; a.textContent = 'Annuler'; }
   else if (page === 'progress') {
-    if (failed) { m.textContent = 'Réessayer'; a.textContent = 'Fermer'; n.textContent = 'Rien n\'est cassé : corrige le problème puis réessaie.'; }
+    if (failed) { m.innerHTML = svg('retry') + 'Réessayer'; a.textContent = 'Fermer'; }
     else { m.hidden = true; a.textContent = 'Annuler'; a.disabled = true; n.textContent = 'Ne ferme pas cette fenêtre.'; }
   }
   else if (page === 'done') { m.textContent = install ? 'Terminer' : 'Fermer'; a.hidden = true; }
   $('close').disabled = page === 'progress' && !failed;
 }
+
 $('b-main').onclick = () => {
-  if (page === 'done') { if (install && $('o-launch').checked) send('launch', { dir: $('dir').value.trim() }); return send('close'); }
+  if (page === 'done') { if (install && $('o-launch').checked) send('launch', { dir: $('dir').value.trim() || S.dir }); return send('close'); }
   start();
 };
 $('b-alt').onclick = () => page === 'welcome' ? go('options') : page === 'options' ? go('welcome') : send('close');
+$('o-data').onchange = () => { $('u-warn').hidden = !$('o-data').checked; foot(); };
+$('logbtn').onclick = () => setLog($('log').hidden);
+function setLog(open) { $('log').hidden = !open; $('logbtn').setAttribute('aria-expanded', open); }
 
-/* ---------- installation : journal façon build log ---------- */
-let t0 = 0, timer = null, expected = 1, seen = 0;
-const elapsed = () => ((performance.now() - t0) / 1000).toFixed(1) + 's';
-const stamp = () => { const d = new Date(); return d.toLocaleTimeString('fr-FR') + '.' + String(d.getMilliseconds()).padStart(3, '0'); };
-function line(text, cls = '') {
-  const el = document.createElement('div'); el.className = 'll ' + cls;
-  el.innerHTML = `<span class="ts">${stamp()}</span><span class="ic"></span><span></span>`;
+/* ---------- déroulé : étapes prévues, cochées au fil des messages de Rust ---------- */
+function planFor(o) {
+  return (install
+    ? [['stop', 'Arrêt de Viherd s\'il tourne'], ['files', 'Copie des fichiers'], o.path && ['path', 'Ajout de viherd au PATH'], ['shortcuts', 'Raccourcis'],
+       ['register', 'Inscription dans « Applications installées »'], o.https && !S.trusted && ['https', 'Approbation de l\'autorité HTTPS']]
+    : [['stop', 'Arrêt de Viherd'], ['shortcuts', 'Raccourcis et démarrage automatique'], ['path', 'Nettoyage du PATH'], ['https', 'Retrait de l\'autorité HTTPS'],
+       o.data && ['data', 'Suppression des données'], ['files', 'Suppression des fichiers']]
+  ).filter(Boolean).map(([id, label]) => ({ id, label, state: 'todo' }));
+}
+const now = () => performance.now();
+const secs = ms => (ms / 1000).toFixed(1) + 's';
+function render() {
+  const ul = $('plan'); ul.innerHTML = '';
+  for (const p of plan) {
+    const li = document.createElement('li'); li.className = 'st ' + p.state;
+    li.innerHTML = `<span class="ic">${p.state === 'ok' ? svg('check', 2.6) : p.state === 'err' ? svg('x', 2.6) : p.state === 'warn' ? svg('alert', 2) : ''}</span><span class="lb"></span><span class="du"></span>`;
+    li.querySelector('.lb').textContent = p.label;
+    li.querySelector('.du').textContent = p.dur != null ? secs(p.dur) : '';
+    ul.append(li);
+  }
+  $('segs').innerHTML = plan.map(p => `<i class="${p.state}"></i>`).join('');
+  const done = plan.filter(p => p.state === 'ok' || p.state === 'warn').length;
+  pct(page === 'done' ? 100 : Math.min(99, Math.round(done / Math.max(plan.length, 1) * 100)));
+}
+function pct(v) { $('pct').innerHTML = v + '<small>%</small>'; }
+function log(text, cls = '') {
+  const d = new Date(), el = document.createElement('div'); el.className = 'll ' + cls;
+  el.innerHTML = `<span class="ts">${d.toLocaleTimeString('fr-FR')}.${String(d.getMilliseconds()).padStart(3, '0')}</span><span></span>`;
   el.lastElementChild.textContent = text;
   $('log').append(el); $('log').scrollTop = $('log').scrollHeight;
-  return el;
 }
-function finishRun(cls) { document.querySelectorAll('.ll.run').forEach(l => { l.className = 'll ' + cls; l.querySelector('.ic').innerHTML = cls === 'ok' ? svg('check', 2.6) : svg('x', 2.6); }); }
-function setPct(p) { $('pct').textContent = Math.round(p) + '%'; $('prog').style.width = p + '%'; }
-function status(kind, txt) { $('s-dot').className = 'sdot ' + kind; $('s-txt').textContent = txt; }
+function status(kind, title, sub) { $('s-dot').className = 'sdot ' + kind; $('p-title').textContent = title; $('p-sub').textContent = sub; }
+function finishRunning(state) { plan.forEach(p => { if (p.state === 'run') { p.state = state; p.dur = now() - p.t0; } }); }
+
 function start() {
   const opts = install
     ? { dir: $('dir').value.trim(), path: $('o-path').checked, desktop: $('o-desktop').checked, autostart: $('o-autostart').checked, https: $('o-https').checked }
     : { data: $('o-data').checked };
-  if (!install && opts.data && !confirm('Supprimer définitivement ' + S.data + ' (bases de données comprises) ?')) return;
-  expected = install ? 4 + opts.path + (opts.https && !S.trusted) : 5 + opts.data; seen = 0; failed = false;
-  $('log').innerHTML = ''; setPct(0); status('run', install ? 'Building' : 'Removing');
-  line((install ? (up ? 'Mise à jour' : 'Installation') : 'Désinstallation') + ' de Viherd v' + S.version, 'dim');
-  if (install) line('Destination : ' + opts.dir, 'dim');
-  t0 = performance.now(); clearInterval(timer); timer = setInterval(() => $('s-time').textContent = elapsed(), 100);
-  go('progress');
+  plan = planFor(opts); failed = false; run++;
+  $('log').innerHTML = ''; $('err').hidden = true;
+  const what = install ? (up ? 'Mise à jour' : 'Installation') : 'Désinstallation';
+  status('run', what + ' en cours', install ? 'Destination : ' + (opts.dir || S.dir) : 'Ne ferme pas cette fenêtre.');
+  log(what + ' de Viherd v' + S.version, 'dim');
+  t0 = now(); clearInterval(timer); timer = setInterval(() => $('s-time').textContent = secs(now() - t0), 100);
+  go('progress'); render();
   send(S.mode, { opts });
 }
+
 function onEvent(e) {
   if (e.step) {
-    finishRun('ok'); line(e.label, 'run'); seen++; setPct(Math.min(95, seen / expected * 95));
+    if (e.step === 'https-skip') {
+      const h = plan.find(p => p.id === 'https');
+      if (h) { h.state = 'warn'; h.dur = now() - h.t0; h.label = e.label; }
+      log(e.label, 'warn'); return render();
+    }
+    finishRunning('ok');
+    let p = plan.find(x => x.id === e.step && x.state === 'todo');
+    if (!p) { p = { id: e.step }; plan.push(p); }
+    Object.assign(p, { label: e.label, state: 'run', t0: now() });
+    log(e.label); render();
   } else if (e.done) {
-    finishRun('ok'); setPct(100); clearInterval(timer); status('ok', 'Ready');
-    line('Terminé en ' + elapsed(), 'ok').querySelector('.ic').innerHTML = svg('check', 2.6);
-    setTimeout(() => {
-      $('d-time').textContent = elapsed();
-      if (install) {
-        $('d-dir').textContent = $('dir').value.trim() || S.dir;
-        if (up) $('d-title').textContent = 'Viherd est à jour.';
-        $('d-cmds').innerHTML = [['viherd install php 8.4', 'installe PHP'], ['cd ~\\Sites; viherd park', 'chaque sous-dossier devient nom.test'], ['viherd secure', 'passe le site courant en HTTPS']]
-          .map(([c]) => `<div class="c"><i>$</i><span>${c}</span><button title="Copier" data-c="${c.replace(/"/g, '&quot;')}">${svg('copy')}</button></div>`).join('');
-        $('d-cmds').querySelectorAll('button').forEach(b => b.onclick = () => { navigator.clipboard?.writeText(b.dataset.c); b.innerHTML = svg('check', 2.4); setTimeout(() => b.innerHTML = svg('copy'), 1200); });
-      } else {
-        $('d-title').textContent = 'Viherd est désinstallé.';
-        $('d-lead').textContent = $('o-data').checked ? 'Les données ont aussi été supprimées.' : 'Tes données restent dans ' + S.data + ' si tu le réinstalles.';
-        $('d-dir').textContent = S.existing || S.dir; $('d-cmds').hidden = true; $('d-launch').hidden = true;
-      }
-      go('done');
-    }, 700);
+    finishRunning('ok'); plan = plan.filter(p => p.state !== 'todo'); clearInterval(timer);
+    const total = secs(now() - t0);
+    status('ok', 'Terminé', 'En ' + total); log('Terminé en ' + total, 'ok'); render(); pct(100);
+    setTimeout(() => { fillDone(total); go('done'); }, 650);
   } else if (e.error) {
-    finishRun('err'); clearInterval(timer); failed = true; status('err', 'Error');
-    line(e.error, 'err msg').querySelector('.ic').innerHTML = svg('x', 2.6);
-    go('progress');
+    finishRunning('err'); clearInterval(timer); failed = true;
+    status('err', 'Échec', 'Une étape n\'a pas abouti.');
+    $('err-msg').textContent = e.error; $('err').hidden = false;
+    log(e.error, 'err'); render(); go('progress');
   }
 }
 
-/* ---------- démarrage ---------- */
-$('dir').value = S.dir;
-if (S.trusted) $('o-https-sub').textContent = 'Déjà approuvé sur ce compte : rien à confirmer';
-$('u-dir').textContent = S.existing || S.dir; $('u-data').textContent = S.data;
-if (up) { $('w-title').textContent = 'Mettre à jour Viherd'; $('w-lead').textContent = 'Viherd est arrêté le temps de la mise à jour. Sites, workers et réglages sont conservés.'; }
-go(install ? 'welcome' : 'uninstall');
+function fillDone(total) {
+  $('d-time').textContent = total; $('d-ver').textContent = 'v' + S.version;
+  $('d-dir').textContent = install ? ($('dir').value.trim() || S.dir) : (S.existing || S.dir);
+  $('d-cmds').hidden = !install; $('d-launch').hidden = !install;
+  if (install) {
+    $('d-title').textContent = up ? 'Viherd est à jour.' : 'Viherd est installé.';
+    $('d-lead').textContent = 'Il vit dans la barre des tâches. Pour commencer, dans un nouveau terminal :';
+    const cmds = [['viherd install php 8.4', 'installe PHP'], ['cd ~\\Sites; viherd park', 'les dossiers deviennent nom.test'], ['viherd secure', 'passe le site en HTTPS']];
+    $('d-cmds').innerHTML = cmds.map(([c, h]) => `<div class="c"><i>$</i><span></span><em></em><button type="button" title="Copier">${svg('copy')}</button></div>`).join('');
+    $('d-cmds').querySelectorAll('.c').forEach((row, i) => {
+      const [c, h] = cmds[i]; row.querySelector('span').textContent = c; row.querySelector('em').textContent = h;
+      const b = row.querySelector('button');
+      b.onclick = () => {
+        const ok = () => { b.innerHTML = svg('check', 2.4); setTimeout(() => b.innerHTML = svg('copy'), 1200); };
+        try { navigator.clipboard.writeText(c).then(ok, () => selectText(row)); } catch { selectText(row); }
+      };
+    });
+  } else {
+    $('d-title').textContent = 'Viherd est désinstallé.';
+    $('d-lead').textContent = $('o-data').checked ? 'Les données ont aussi été supprimées.' : 'Tes données restent dans ' + S.data + ' si tu le réinstalles.';
+  }
+}
+function selectText(row) { const r = document.createRange(); r.selectNodeContents(row.querySelector('span')); getSelection().removeAllRanges(); getSelection().addRange(r); }
+
 document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && !$('b-main').hidden && !$('b-main').disabled) { e.preventDefault(); $('b-main').click(); }
+  if (e.key === 'Enter' && !$('b-main').hidden && !$('b-main').disabled && !e.target.closest('button')) { e.preventDefault(); $('b-main').click(); }
   if (e.key === 'Escape' && !$('close').disabled) page === 'options' ? go('welcome') : send('close');
 });
-document.addEventListener('contextmenu', e => { if (!e.target.closest('input,.log-b,.cmds')) e.preventDefault(); });
+document.addEventListener('contextmenu', e => { if (!e.target.closest('input,.log,.cmds')) e.preventDefault(); });
+$('hdr').addEventListener('mousedown', e => { if (!e.target.closest('button')) send('drag'); });
+$('side').addEventListener('mousedown', () => send('drag'));
 
-/* ---------- démo dans un navigateur ---------- */
-function demo(cmd) {
-  if (cmd !== 'install' && cmd !== 'uninstall') return console.log('[ipc]', cmd);
-  const steps = cmd === 'install'
-    ? ["Arrêt de Viherd s'il tourne", 'Copie des fichiers', 'Ajout de viherd au PATH', 'Raccourcis', 'Inscription dans « Applications installées »']
-    : ['Arrêt de Viherd', 'Raccourcis et démarrage automatique', 'Nettoyage du PATH', "Retrait de l'autorité HTTPS", 'Suppression des fichiers'];
-  steps.forEach((label, i) => setTimeout(() => onEvent({ step: 's' + i, label }), 300 + i * 600));
-  setTimeout(() => onEvent(window.DEMO_FAIL ? { error: 'viherd-app.exe est verrouillé (Viherd tourne encore ?)' } : { done: true }), 300 + steps.length * 600 + 300);
+/* ---------- aperçu dans un navigateur ---------- */
+function toast(t) {
+  document.querySelector('.toast')?.remove();
+  const el = document.createElement('div'); el.className = 'toast'; el.textContent = t; $('win').append(el);
+  setTimeout(() => el.remove(), 1800);
 }
+function demo(cmd) {
+  if (cmd === 'close') { toast('La fenêtre se fermerait ici'); return setTimeout(boot, 900); }
+  if (cmd === 'launch') return toast('Viherd démarrerait ici');
+  if (cmd !== 'install' && cmd !== 'uninstall') return;
+  const id = run, fail = $('d-fail').checked;
+  const steps = plan.map(p => [p.id, p.id === 'https' && install ? 'Approbation de l\'autorité HTTPS (confirme dans la fenêtre Windows)' : p.label]);
+  const todo = fail ? steps.slice(0, 2) : steps;
+  let t = 350;
+  todo.forEach(([step, label]) => { setTimeout(() => id === run && onEvent({ step, label }), t); t += step === 'files' ? 1300 : step === 'https' ? 1800 : 650; });
+  setTimeout(() => id === run && onEvent(fail ? { error: 'viherd-app.exe est verrouillé : Viherd tourne encore ?\n(os error 32) Le processus ne peut pas accéder au fichier car ce fichier est utilisé par un autre processus.' } : { done: true }), t);
+}
+if (DEMO) {
+  document.body.classList.add('demo');
+  $('frame').append($('win'));
+  const fit = () => {
+    const s = Math.min(1, ($('stage').clientWidth - 32) / 860);
+    $('win').style.transform = s < 1 ? `scale(${s})` : '';
+    $('frame').style.width = 860 * s + 'px'; $('frame').style.height = 540 * s + 'px';
+  };
+  addEventListener('resize', fit); fit();
+  document.querySelectorAll('.segctl button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.segctl button').forEach(x => x.classList.toggle('on', x === b));
+    const m = b.dataset.m;
+    S = { ...DEMO_SETUP, mode: m === 'uninstall' ? 'uninstall' : 'install', existing: m === 'install' ? null : DEMO_SETUP.dir, trusted: $('d-trusted').checked };
+    boot();
+  });
+  $('d-trusted').onchange = () => { S.trusted = $('d-trusted').checked; if (page === 'welcome' || page === 'options') boot(); };
+}
+boot();
 </script>
 </body>
 </html>
