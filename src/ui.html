@@ -454,6 +454,35 @@ table.grid .cb { width: 36px; padding-right: 0; cursor: default; }
 table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
 .cmdline { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); font: 12.5px var(--mono); }
 .cmdline span { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+/* choix d'un dossier (parquer / lier) */
+.pick { display: flex; align-items: center; height: 40px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); overflow: hidden; }
+.pick:focus-within { border-color: var(--line-4); }
+.pick .pre { height: 100%; display: grid; place-items: center; padding: 0 11px; border-right: 1px solid var(--line-2); color: var(--t3); background: var(--bg-2); }
+.pick input { all: unset; flex: 1; min-width: 0; padding: 0 12px; font: 13px var(--mono); color: var(--t1); }
+.pick button { all: unset; cursor: pointer; height: 100%; padding: 0 14px; border-left: 1px solid var(--line-2); font-size: 13px; font-weight: 500; color: var(--t1); background: var(--bg-1); white-space: nowrap; }
+.pick button:hover { background: var(--bg-3); }
+.pick-name { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--t2); }
+.pick-name label { width: 60px; }
+.pick-name .inp { flex: 1; height: 36px; }
+.pick-name .mono { color: var(--t3); }
+.pick-prev { display: grid; gap: 10px; min-height: 20px; }
+.pick-k { font-size: 13px; color: var(--t2); }
+.pick-k b { color: var(--t1); font-weight: 500; }
+.pick-sug { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.pick-sug button { all: unset; cursor: pointer; display: grid; grid-template-columns: 16px 1fr; gap: 2px 8px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); }
+.pick-sug button:hover { border-color: var(--line-4); background: var(--bg-2); }
+.pick-sug svg { color: var(--t3); grid-row: span 2; margin-top: 2px; }
+.pick-sug b { font: 500 13px var(--mono); }
+.pick-sug span { font-size: 12px; color: var(--t3); }
+.pick-kids { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px; max-height: 210px; overflow: auto; }
+.pick-kids > span { display: grid; gap: 1px; padding: 7px 10px; border: 1px solid var(--line-2); border-radius: 7px; min-width: 0; }
+.pick-kids b { font: 500 12.5px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-kids em { font-style: normal; font-size: 11.5px; color: var(--t3); }
+.pick-kids .dim { opacity: .55; }
+.pick-card { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); font-size: 12.5px; min-width: 0; }
+.pick-warn { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--amber); }
+.pick-warn svg { flex: none; margin-top: 2px; }
+.pick-warn .link { color: var(--t1); }
 .notes-pre { white-space: pre-wrap; font-size: 13px; color: var(--t2); max-height: 260px; overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; padding: 12px; background: var(--bg); }
 .bk > div span { font-size: 12.5px; color: var(--t3); font-family: var(--mono); }
 .dbstats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -2052,16 +2081,84 @@ function closeAll() {
   $('veil').classList.remove('light');
   if (DB.row != null) { DB.row = null; document.querySelectorAll('table.grid tr.cur').forEach(tr => tr.classList.remove('cur')); }
 }
-function dlgPark() {
-  modal(`<div class="m-b"><h3>Parquer un dossier</h3><p>Chaque sous-dossier deviendra un site <span class="hl">nom.${esc(S.tld)}</span>. Un <span class="hl">viherd.toml</span> dans un projet fixe ses versions, ses workers et ses routes.</p>
-    <input class="inp mono" id="m-path" placeholder="C:\\Users\\moi\\Sites" onkeydown="if(event.key==='Enter')$('m-ok').click()"></div>
-    <div class="m-f"><button class="b ghost" onclick="closeAll();dlgLink()">${ic('link')}Lier un seul projet</button><span></span><button class="b pri" id="m-ok" onclick="const p=$('m-path').value.trim();if(p){closeAll();act('/api/park',{path:p},'Dossier parqué','Découverte des sites…')}">Parquer</button></div>`);
+/* ---------- parquer / lier : choix du dossier avec aperçu ---------- */
+const KIND = { laravel: 'Laravel', php: 'PHP', node: 'Node', static: 'Statique', folder: 'Dossier' };
+let PICK = { mode: 'park', info: null, timer: null, named: false };
+const pathField = ph => `<div class="pick"><span class="pre">${ic('folder')}</span>
+  <input class="mono" id="m-path" placeholder="${ph}" spellcheck="false" oninput="pathTyped()" onkeydown="if(event.key==='Enter'&&!$('m-ok').disabled)$('m-ok').click()">
+  <button onclick="pickFolder()">Parcourir…</button></div>`;
+function dlgPark(path) {
+  PICK = { mode: 'park', info: null, timer: null, named: false };
+  modal(`<div class="m-b"><h3>Parquer un dossier</h3><p>Chaque sous-dossier devient un site <span class="hl">nom.${esc(S.tld)}</span>, y compris ceux que tu ajouteras plus tard.</p>
+    ${pathField('C:\\Users\\moi\\Sites')}<div id="m-prev" class="pick-prev"></div></div>
+    <div class="m-f"><button class="b ghost" onclick="const p=$('m-path').value.trim();closeAll();dlgLink(p)">${ic('link')}Lier un seul projet</button><span></span><button class="b ghost" onclick="closeAll()">Annuler</button>
+      <button class="b pri" id="m-ok" disabled onclick="parkGo()">Parquer</button></div>`);
+  if (typeof path === 'string' && path) { $('m-path').value = path; inspectPath(); } else showSuggestions();
 }
-function dlgLink() {
-  modal(`<div class="m-b"><h3>Lier un projet</h3><p>Sers un dossier précis sans le déplacer.</p>
-    <input class="inp mono" id="m-path" placeholder="C:\\chemin\\vers\\mon-projet">
-    <input class="inp" id="m-name" placeholder="Nom du site (optionnel, sinon le nom du dossier)" onkeydown="if(event.key==='Enter')$('m-ok').click()"></div>
-    <div class="m-f"><span></span><button class="b ghost" onclick="closeAll()">Annuler</button><button class="b pri" id="m-ok" onclick="const p=$('m-path').value.trim();if(p){closeAll();act('/api/link',{path:p,name:$('m-name').value.trim()},'Projet lié')}">Lier</button></div>`);
+function dlgLink(path) {
+  PICK = { mode: 'link', info: null, timer: null, named: false };
+  modal(`<div class="m-b"><h3>Lier un projet</h3><p>Sert un dossier précis là où il est, sans le déplacer.</p>
+    ${pathField('C:\\chemin\\vers\\mon-projet')}
+    <div class="pick-name"><label for="m-name">Adresse</label><input class="inp mono" id="m-name" placeholder="mon-projet" spellcheck="false"
+      oninput="PICK.named=true;this.value=this.value.toLowerCase().replace(/[^a-z0-9_-]/g,'-');drawPick()" onkeydown="if(event.key==='Enter'&&!$('m-ok').disabled)$('m-ok').click()"><span class="mono">.${esc(S.tld)}</span></div>
+    <div id="m-prev" class="pick-prev"></div></div>
+    <div class="m-f"><span></span><button class="b ghost" onclick="closeAll()">Annuler</button><button class="b pri" id="m-ok" disabled onclick="linkGo()">Lier</button></div>`);
+  if (typeof path === 'string' && path) { $('m-path').value = path; inspectPath(); }
+  setTimeout(() => $('m-path')?.focus(), 30);
+}
+async function pickFolder() {
+  const b = toast('Choisis le dossier dans la fenêtre Windows…', 'busy');
+  try {
+    const r = await apiPost('/api/fs/pick', { title: PICK.mode === 'park' ? 'Dossier qui contient tes projets' : 'Dossier du projet', start: $('m-path')?.value.trim() || '' });
+    if (r.path && $('m-path')) { $('m-path').value = r.path; inspectPath(); }
+  } catch (e) { toast(e.message, 'err'); } finally { b.remove(); }
+}
+function pathTyped() { clearTimeout(PICK.timer); PICK.timer = setTimeout(inspectPath, 250); }
+async function inspectPath() {
+  const p = $('m-path')?.value.trim();
+  if (!p) { PICK.info = null; return PICK.mode === 'park' ? showSuggestions() : drawPick(); }
+  try { PICK.info = await apiGet('/api/fs/inspect', { path: p }); } catch { PICK.info = { exists: false }; }
+  if (PICK.mode === 'link' && PICK.info.exists && !PICK.named && $('m-name')) $('m-name').value = PICK.info.name;
+  drawPick();
+}
+async function showSuggestions() {
+  const box = $('m-prev'); if (!box) return;
+  $('m-ok').disabled = true;
+  let list = []; try { list = await apiGet('/api/fs/suggest', {}); } catch {}
+  if (!$('m-prev') || $('m-path').value.trim()) return;
+  box.innerHTML = list.length ? `<span class="pick-k">Dossiers trouvés sur ta machine</span><div class="pick-sug">${list.map(d => `<button onclick="$('m-path').value=${J(d.path)};inspectPath()">${ic('folder')}<b>${esc(d.label)}</b><span>${d.projects} projet${d.projects > 1 ? 's' : ''}</span></button>`).join('')}</div>`
+    : `<span class="pick-k">Tape un chemin ou clique sur Parcourir.</span>`;
+}
+function drawPick() {
+  const box = $('m-prev'), ok = $('m-ok'), i = PICK.info; if (!box) return;
+  const typed = $('m-path').value.trim();
+  if (!i || !i.exists) {
+    ok.disabled = true;
+    box.innerHTML = typed && i ? `<div class="pick-warn">${ic('alert')}Ce dossier n'existe pas.</div>` : '';
+    return;
+  }
+  if (PICK.mode === 'park') {
+    const projects = i.children.filter(c => c.kind !== 'folder'), shown = i.children.slice(0, 24);
+    ok.disabled = i.parked;
+    box.innerHTML = i.parked ? `<div class="pick-warn">${ic('alert')}Ce dossier est déjà parqué.</div>`
+      : !i.children.length ? `<div class="pick-warn">${ic('alert')}Ce dossier n'a pas de sous-dossier : rien à servir pour l'instant.${i.kind !== 'folder' ? ` C'est un projet ${KIND[i.kind]} : <button class="link" onclick="closeAll();dlgLink(${J(i.path)})">le lier plutôt</button>.` : ''}</div>`
+      : `<span class="pick-k"><b>${i.children.length} site${i.children.length > 1 ? 's' : ''}</b> en .${esc(S.tld)}${projects.length < i.children.length ? ` · ${projects.length} projet${projects.length > 1 ? 's' : ''} reconnu${projects.length > 1 ? 's' : ''}` : ''}</span>
+        <div class="pick-kids">${shown.map(c => `<span class="${c.kind === 'folder' ? 'dim' : ''}" title="${c.site ? 'déjà servi' : KIND[c.kind]}"><b>${esc(c.name)}</b><em>${c.site ? 'déjà servi' : KIND[c.kind]}</em></span>`).join('')}
+          ${i.children.length > shown.length ? `<span class="dim"><b>+ ${i.children.length - shown.length}</b><em>autres</em></span>` : ''}</div>`;
+    return;
+  }
+  const name = $('m-name').value.trim() || i.name, url = `${name}.${S.tld}`;
+  const warn = i.site ? `Déjà servi comme <span class="hl">${esc(i.site)}.${esc(S.tld)}</span>.`
+    : siteOf(name) ? `<span class="hl">${esc(url)}</span> est déjà pris par ${esc(siteOf(name).path)}. Choisis une autre adresse.` : '';
+  ok.disabled = !!warn || !name;
+  box.innerHTML = `<div class="pick-card"><span class="tag">${KIND[i.kind]}</span><span class="mono ell">${esc(i.path)}</span></div>
+    ${warn ? `<div class="pick-warn">${ic('alert')}<span>${warn}</span></div>`
+      : `<span class="pick-k">Servi sur <b class="mono">http://${esc(url)}${S.http_port === 80 ? '' : ':' + S.http_port}</b>${i.kind === 'node' ? ' · app Node : règle le port du proxy dans les réglages du site' : i.kind === 'folder' ? ' · aucun index.php ni package.json trouvé' : ''}</span>`}`;
+}
+function parkGo() { const p = PICK.info?.path; if (!p) return; closeAll(); act('/api/park', { path: p }, 'Dossier parqué', 'Découverte des sites…').then(() => go('sites')).catch(() => {}); }
+function linkGo() {
+  const p = PICK.info?.path, name = $('m-name').value.trim() || PICK.info?.name; if (!p) return;
+  closeAll(); act('/api/link', { path: p, name }, `Projet lié : ${name}.${S.tld}`).then(() => go('sites', name)).catch(() => {});
 }
 let newTpl = 'laravel';
 function dlgNew() {

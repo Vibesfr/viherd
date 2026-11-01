@@ -338,6 +338,20 @@ async fn route(req: Request<Incoming>, st: &Arc<State>) -> Result<Response<Body>
             ok()
         }
 
+        // ---------- choix d'un dossier (parquer, lier) ----------
+        ("POST", "/api/fs/pick") => {
+            // la fenêtre « Choisir un dossier » de Windows, ouverte par le démon (même session que l'utilisateur)
+            let (title, start) = (s("title"), s("start"));
+            let picked = tokio::task::spawn_blocking(move || {
+                let mut d = rfd::FileDialog::new().set_title(if title.is_empty() { "Choisir un dossier" } else { &title });
+                if !start.is_empty() && Path::new(&start).is_dir() { d = d.set_directory(&start); }
+                d.pick_folder()
+            }).await?;
+            json(j!({ "path": picked.map(|p| crate::config::plain_path(&p).display().to_string()) }))
+        }
+        ("GET", "/api/fs/inspect") => json(inspect_dir(st, &q("path"))),
+        ("GET", "/api/fs/suggest") => json(j!(suggest_dirs(&Global::load()?))),
+
         // ---------- projets ----------
         ("POST", "/api/project/new") => new_project(st, &s("dir"), &s("name"), &s("template")).await,
         ("POST", "/api/park") | ("POST", "/api/unpark") => {
@@ -499,6 +513,63 @@ async fn route(req: Request<Incoming>, st: &Arc<State>) -> Result<Response<Body>
         }
         _ => Err(anyhow!("route inconnue: {method} {path}")),
     }
+}
+
+/// Type de projet d'un dossier, pour l'aperçu avant de parquer / lier.
+fn project_kind(dir: &Path) -> &'static str {
+    if dir.join("artisan").is_file() { "laravel" }
+    else if dir.join("composer.json").is_file() || dir.join("index.php").is_file() || dir.join("public").join("index.php").is_file() { "php" }
+    else if dir.join("package.json").is_file() { "node" }
+    else if dir.join("index.html").is_file() || dir.join("public").join("index.html").is_file() { "static" }
+    else { "folder" }
+}
+
+/// Ce que donnerait un dossier : son type, le nom de site, et ses sous-dossiers (pour parquer).
+fn inspect_dir(st: &State, raw: &str) -> Value {
+    let p = PathBuf::from(raw.trim().trim_matches('"'));
+    if raw.trim().is_empty() || !p.is_dir() {
+        return j!({ "exists": false });
+    }
+    let p = crate::config::canonical(&p).unwrap_or(p);
+    let g = st.global.read().unwrap().clone();
+    let sites = st.sites.read().unwrap().clone();
+    let site_of = |d: &Path| sites.values().find(|s| s.path == d).map(|s| s.name.clone());
+    let name = crate::config::site_name(&p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
+    let mut children: Vec<Value> = std::fs::read_dir(&p).into_iter().flatten().flatten()
+        .filter(|e| e.path().is_dir() && !e.file_name().to_string_lossy().starts_with('.'))
+        .map(|e| {
+            let n = e.file_name().to_string_lossy().to_string();
+            j!({ "name": crate::config::site_name(&n), "kind": project_kind(&e.path()), "site": site_of(&e.path()) })
+        })
+        .collect();
+    children.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    j!({
+        "exists": true,
+        "path": p.display().to_string(),
+        "name": name,
+        "kind": project_kind(&p),
+        // site déjà servi depuis ce dossier, et site qui porte déjà ce nom ailleurs
+        "site": site_of(&p),
+        "name_taken": sites.get(&name).filter(|s| s.path != p).map(|s| s.path.display().to_string()),
+        "parked": g.parked.iter().any(|d| d == &p),
+        "children": children,
+    })
+}
+
+/// Dossiers où l'on range souvent ses projets, s'ils existent et ne sont pas déjà parqués.
+fn suggest_dirs(g: &Global) -> Vec<Value> {
+    let Some(home) = dirs::home_dir() else { return vec![] };
+    let mut out = vec![];
+    for rel in ["Herd", "Sites", "Code", "code", "Projects", "Projets", "dev", "Dev", "www", "Documents\\GitHub", "source\\repos", "Desktop"] {
+        let d = home.join(rel);
+        if !d.is_dir() || g.parked.iter().any(|p| p.to_string_lossy().eq_ignore_ascii_case(&d.to_string_lossy())) { continue; }
+        let projects = std::fs::read_dir(&d).into_iter().flatten().flatten()
+            .filter(|e| e.path().is_dir() && project_kind(&e.path()) != "folder").count();
+        if projects > 0 && !out.iter().any(|v: &Value| v["path"].as_str().is_some_and(|p| p.eq_ignore_ascii_case(&d.to_string_lossy()))) {
+            out.push(j!({ "path": d.display().to_string(), "label": rel.replace('\\', "/"), "projects": projects }));
+        }
+    }
+    out
 }
 
 /// Nouveau projet dans un dossier parqué : Laravel (composer create-project) ou vide.
