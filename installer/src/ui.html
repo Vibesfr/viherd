@@ -221,7 +221,7 @@ kbd { font: 500 11px var(--mono); padding: 0 5px; border-radius: 4px; border: 1p
           <label class="row"><span class="rt"><b>Commande <span class="hl">viherd</span></b><span>Ajoutée au PATH de ton compte</span></span><input type="checkbox" id="o-path" checked><i class="sw"></i></label>
           <label class="row"><span class="rt"><b>Raccourci sur le Bureau</b><span>Le menu Démarrer est toujours ajouté</span></span><input type="checkbox" id="o-desktop" checked><i class="sw"></i></label>
           <label class="row"><span class="rt"><b>Lancer avec Windows</b><span>Tes sites sont prêts dès l'ouverture de session</span></span><input type="checkbox" id="o-autostart"><i class="sw"></i></label>
-          <label class="row"><span class="rt"><b>Approuver le HTTPS local</b><span>Windows te demandera de confirmer l'autorité Viherd</span></span><input type="checkbox" id="o-https"><i class="sw"></i></label>
+          <label class="row"><span class="rt"><b>Approuver le HTTPS local</b><span id="o-https-sub">Windows te demandera une seule fois de confirmer l'autorité Viherd</span></span><input type="checkbox" id="o-https" checked><i class="sw"></i></label>
         </div>
       </section>
 
@@ -349,7 +349,7 @@ function start() {
     ? { dir: $('dir').value.trim(), path: $('o-path').checked, desktop: $('o-desktop').checked, autostart: $('o-autostart').checked, https: $('o-https').checked }
     : { data: $('o-data').checked };
   if (!install && opts.data && !confirm('Supprimer définitivement ' + S.data + ' (bases de données comprises) ?')) return;
-  expected = install ? 4 + opts.path + opts.https : 5 + opts.data; seen = 0; failed = false;
+  expected = install ? 4 + opts.path + (opts.https && !S.trusted) : 5 + opts.data; seen = 0; failed = false;
   $('log').innerHTML = ''; setPct(0); status('run', install ? 'Building' : 'Removing');
   line((install ? (up ? 'Mise à jour' : 'Installation') : 'Désinstallation') + ' de Viherd v' + S.version, 'dim');
   if (install) line('Destination : ' + opts.dir, 'dim');
@@ -387,6 +387,7 @@ function onEvent(e) {
 
 /* ---------- démarrage ---------- */
 $('dir').value = S.dir;
+if (S.trusted) $('o-https-sub').textContent = 'Déjà approuvé sur ce compte : rien à confirmer';
 $('u-dir').textContent = S.existing || S.dir; $('u-data').textContent = S.data;
 if (up) { $('w-title').textContent = 'Mettre à jour Viherd'; $('w-lead').textContent = 'Viherd est arrêté le temps de la mise à jour. Sites, workers et réglages sont conservés.'; }
 go(install ? 'welcome' : 'uninstall');

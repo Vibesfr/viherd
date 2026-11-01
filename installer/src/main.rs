@@ -54,6 +54,8 @@ fn main() {
         "dir": installed_dir().unwrap_or_else(default_dir).display().to_string(),
         "existing": installed_dir().map(|d| d.display().to_string()),
         "data": viherd::paths::home().display().to_string(),
+        // sans créer l'autorité juste pour regarder
+        "trusted": viherd::certs::ca_cert_path().exists() && viherd::certs::is_trusted(),
     });
     let ipc_proxy = proxy.clone();
     let webview = WebViewBuilder::new()
@@ -248,9 +250,12 @@ fn do_install(opts: &Value, step: &impl Fn(&str, &str)) -> Result<()> {
         reg(&["add", UNINSTALL_KEY, "/v", name, "/t", kind, "/d", &val, "/f"])?;
     }
 
-    if opt(opts, "https") {
+    // Déjà approuvée : pas de nouvelle fenêtre Windows. Refusée : l'installation reste réussie.
+    if opt(opts, "https") && !viherd::certs::is_trusted() {
         step("https", "Approbation de l'autorité HTTPS (confirme dans la fenêtre Windows)");
-        viherd::certs::trust()?;
+        if viherd::certs::trust().is_err() {
+            step("https-skip", "HTTPS local non approuvé : lance « viherd trust » quand tu veux");
+        }
     }
     Ok(())
 }

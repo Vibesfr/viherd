@@ -115,6 +115,9 @@ static TRUST_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 /// Ajoute l'autorité au magasin de l'utilisateur (Windows affiche une confirmation, pas besoin d'être admin).
 pub fn trust() -> Result<()> {
     Ca::load_or_create()?;
+    if is_trusted() {
+        return Ok(()); // déjà dans le magasin : pas de nouvelle fenêtre Windows
+    }
     let p = ca_cert_path().display().to_string();
     let o = certutil(&["-user", "-addstore", "Root", &p])?;
     TRUST_CHANGED.store(true, std::sync::atomic::Ordering::SeqCst);
