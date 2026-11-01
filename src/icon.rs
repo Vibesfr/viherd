@@ -1,4 +1,5 @@
-//! Icône de Viherd dessinée en code (pas de fichier image) : pastille verte avec un « V » blanc.
+//! Icône de Viherd dessinée en code (pas de fichier image) : le logo de l'interface,
+//! un carré arrondi clair avec un « V » noir (mêmes proportions que `.logo` dans ui.html).
 //! Partagée par l'appli de bureau, l'installeur et les scripts de build (fichier .ico des .exe) :
 //! ce module ne dépend d'aucune crate.
 
@@ -34,13 +35,27 @@ pub fn rgba(n: u32) -> (Vec<u8>, u32, u32) {
 
 /// Couleur du dessin en un point (coordonnées 0..32) : RGB 0-255, alpha 0-1.
 fn sample(x: f32, y: f32) -> [f32; 4] {
-    let (dx, dy) = (x - 16.0, y - 16.0);
-    if dx * dx + dy * dy > 15.5 * 15.5 {
+    // carré 30×30 centré, coins arrondis comme le logo (7 px pour 26 px)
+    let d = rounded_box(x - 16.0, y - 16.0, 15.0, 8.0);
+    if d > 0.0 {
         return [0.0, 0.0, 0.0, 0.0];
     }
-    // deux segments du V : (9.5,9)->(16,24) et (22.5,9)->(16,24)
-    let v = seg_dist(x, y, 9.5, 9.0, 16.0, 24.0) < 2.2 || seg_dist(x, y, 22.5, 9.0, 16.0, 24.0) < 2.2;
-    if v { [255.0, 255.0, 255.0, 1.0] } else { [47.0, 111.0, 78.0, 1.0] }
+    // le chemin SVG du logo « m4.5 5.5 7.5 13 7.5-13 » (repère 24), agrandi ×0,75 et centré, trait 3,4
+    const K: f32 = 0.75;
+    let p = |u: f32, v: f32| (16.0 + (u - 12.0) * K, 16.0 + (v - 12.0) * K);
+    let ((ax, ay), (bx, by), (cx, cy)) = (p(4.5, 5.5), p(12.0, 18.5), p(19.5, 5.5));
+    let half = 3.4 * K / 2.0;
+    if seg_dist(x, y, ax, ay, bx, by) < half || seg_dist(x, y, cx, cy, bx, by) < half {
+        return [10.0, 10.0, 10.0, 1.0];
+    }
+    // liseré à peine plus sombre : le carré clair reste visible sur un fond blanc
+    if d > -0.6 { [205.0, 205.0, 205.0, 1.0] } else { [237.0, 237.0, 237.0, 1.0] }
+}
+
+/// Distance signée à un carré de demi-côté `h` aux coins de rayon `r` (négative à l'intérieur).
+fn rounded_box(x: f32, y: f32, h: f32, r: f32) -> f32 {
+    let (qx, qy) = (x.abs() - (h - r), y.abs() - (h - r));
+    (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r
 }
 
 fn seg_dist(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
