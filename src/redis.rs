@@ -96,17 +96,27 @@ pub fn read_reply<'a, R: AsyncBufRead + Unpin + Send>(r: &'a mut R) -> Pin<Box<d
     })
 }
 
-/// Str::slug($s, '_') de Laravel, pour retrouver les préfixes par défaut (APP_NAME → laravel_database_).
-pub fn laravel_slug(s: &str) -> String {
+/// Str::slug($s, $sep) de Laravel, pour retrouver les préfixes par défaut (APP_NAME → laravel-database-).
+pub fn laravel_slug(s: &str, sep: char) -> String {
     let mut out = String::new();
     for c in s.to_lowercase().chars() {
         if c.is_ascii_alphanumeric() {
             out.push(c);
-        } else if !out.ends_with('_') && !out.is_empty() {
-            out.push('_');
+        } else if !out.ends_with(sep) && !out.is_empty() {
+            out.push(sep);
         }
     }
-    out.trim_end_matches('_').to_string()
+    out.trim_end_matches(sep).to_string()
+}
+
+/// Préfixe Redis par défaut : `slug-database-` depuis Laravel 11, `slug_database_` avant.
+/// On regarde le config/database.php du projet plutôt que de deviner la version.
+pub fn laravel_default_prefix(database_php: &str, app_name: &str) -> String {
+    if database_php.contains("'-database-'") {
+        format!("{}-database-", laravel_slug(app_name, '-'))
+    } else {
+        format!("{}_database_", laravel_slug(app_name, '_'))
+    }
 }
 
 #[cfg(test)]
@@ -129,7 +139,16 @@ mod tests {
 
     #[test]
     fn slugs_like_laravel() {
-        assert_eq!(laravel_slug("Laravel"), "laravel");
-        assert_eq!(laravel_slug("Mon App 2"), "mon_app_2");
+        assert_eq!(laravel_slug("Laravel", '_'), "laravel");
+        assert_eq!(laravel_slug("Mon App 2", '_'), "mon_app_2");
+        assert_eq!(laravel_slug("Mon App 2", '-'), "mon-app-2");
+    }
+
+    #[test]
+    fn default_prefix_follows_laravel_version() {
+        let l11 = "'prefix' => env('REDIS_PREFIX', Str::slug((string) env('APP_NAME', 'laravel')).'-database-'),";
+        let l10 = "'prefix' => env('REDIS_PREFIX', Str::slug(env('APP_NAME', 'laravel'), '_').'_database_'),";
+        assert_eq!(laravel_default_prefix(l11, "Mon App"), "mon-app-database-");
+        assert_eq!(laravel_default_prefix(l10, "Mon App"), "mon_app_database_");
     }
 }

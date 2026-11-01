@@ -1,5 +1,5 @@
 //! Installation des versions de PHP / Node / Composer (une copie par version, partagée entre projets).
-use crate::download::{client, download_extract, fetch};
+use crate::download::{client, download_extract, fetch, find_file};
 use crate::paths;
 use anyhow::{anyhow, Result};
 use std::path::{Path, PathBuf};
@@ -19,7 +19,56 @@ pub async fn ensure_php(v: &str) -> Result<PathBuf> {
             tracing::warn!("php.ini {}: {e}", dir.display());
         }
     }
+    // phpredis : client Redis par défaut de Laravel. Pas bloquant s'il manque (hors ligne…)
+    if let Err(e) = ensure_phpredis(v, &dir).await {
+        tracing::warn!("phpredis pour PHP {v} : {e:#}");
+    }
     Ok(dir)
+}
+
+const PECL_REDIS: &str = "https://downloads.php.net/~windows/pecl/releases/redis/";
+
+/// Télécharge php_redis.dll (PECL, build NTS x64) et l'active dans php.ini.
+async fn ensure_phpredis(php: &str, dir: &Path) -> Result<()> {
+    let dll = dir.join("ext").join("php_redis.dll");
+    if !dll.exists() {
+        let index = client().get(PECL_REDIS).send().await?.error_for_status()?.text().await?;
+        let version = latest_stable_dir(&index).ok_or_else(|| anyhow!("aucune version sur {PECL_REDIS}"))?;
+        let page = client().get(format!("{PECL_REDIS}{version}/")).send().await?.error_for_status()?.text().await?;
+        let zip = pecl_zip(&page, "php_redis-", php).ok_or_else(|| anyhow!("pas de build phpredis {version} pour PHP {php}"))?;
+        let tmp = dir.join("ext").join(".phpredis");
+        download_extract(&format!("{PECL_REDIS}{version}/{zip}"), &tmp).await?;
+        let found = find_file(&tmp, "php_redis.dll").ok_or_else(|| anyhow!("php_redis.dll absent de {zip}"));
+        let copied = found.and_then(|f| Ok(std::fs::copy(f, &dll)?));
+        let _ = std::fs::remove_dir_all(&tmp);
+        copied?;
+        tracing::info!("phpredis {version} installé pour PHP {php}");
+    }
+    let ini = dir.join("php.ini");
+    let src = std::fs::read_to_string(&ini)?;
+    if !src.lines().any(|l| l.trim() == "extension=redis") {
+        std::fs::write(&ini, format!("{}\r\nextension=redis\r\n", src.trim_end()))?;
+    }
+    Ok(())
+}
+
+/// Dossier de la version stable la plus récente dans un index PECL (« 6.3.0/ », sans RC ni beta).
+fn latest_stable_dir(index: &str) -> Option<String> {
+    index.split("href=\"").skip(1)
+        .filter_map(|s| s.split('"').next()?.strip_suffix('/'))
+        .filter(|v| !v.is_empty() && v.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .max_by_key(|v| v.split('.').map(|n| n.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>())
+        .map(str::to_string)
+}
+
+/// Zip NTS x64 pour cette version de PHP, ex : php_redis-6.3.0-8.4-nts-vs17-x64.zip
+fn pecl_zip(page: &str, prefix: &str, php: &str) -> Option<String> {
+    let needle = format!("-{php}-nts-");
+    page.split("href=\"").skip(1)
+        .filter_map(|s| s.split('"').next())
+        .map(|h| h.rsplit('/').next().unwrap_or(h))
+        .find(|f| f.starts_with(prefix) && f.contains(&needle) && f.ends_with("-x64.zip"))
+        .map(str::to_string)
 }
 
 /// Active (décommente) les extensions de PHP_EXTS qui seraient encore commentées dans php.ini.
@@ -157,5 +206,15 @@ mod tests {
         assert_eq!(super::xdebug_file(page, "8.3").as_deref(), Some("php_xdebug-3.5.3-8.3-nts-vs16-x86_64.dll"));
         assert_eq!(super::xdebug_file(page, "8.4").as_deref(), Some("php_xdebug-3.5.3-8.4-nts-vs17-x86_64.dll"));
         assert_eq!(super::xdebug_file(page, "7.4"), None);
+    }
+
+    #[test]
+    fn picks_phpredis_build() {
+        let index = r#"<a href="5.3.7RC1/">5.3.7RC1/</a> <a href="6.10.0/">6.10.0/</a> <a href="6.3.0/">6.3.0/</a> <a href="../">..</a>"#;
+        assert_eq!(super::latest_stable_dir(index).as_deref(), Some("6.10.0"));
+        let page = r#"<a href="/~windows/pecl/releases/redis/6.3.0/php_redis-6.3.0-8.4-ts-vs17-x64.zip">
+                      <a href="/~windows/pecl/releases/redis/6.3.0/php_redis-6.3.0-8.4-nts-vs17-x64.zip">"#;
+        assert_eq!(super::pecl_zip(page, "php_redis-", "8.4").as_deref(), Some("php_redis-6.3.0-8.4-nts-vs17-x64.zip"));
+        assert_eq!(super::pecl_zip(page, "php_redis-", "8.3"), None);
     }
 }

@@ -578,8 +578,13 @@ async fn queue_state(site: &crate::config::Site) -> Result<Value> {
 /// File Redis : clés {prefix}queues:{nom} (liste en attente, :reserved en cours, :delayed différés).
 async fn redis_queue_state(site: &crate::config::Site, env: &std::collections::HashMap<String, String>) -> Result<Value> {
     let get = |k: &str, d: &str| env.get(k).filter(|v| !v.is_empty() && v.as_str() != "null").cloned().unwrap_or_else(|| d.to_string());
-    let app = crate::redis::laravel_slug(&get("APP_NAME", "laravel"));
-    let prefix = env.get("REDIS_PREFIX").cloned().unwrap_or_else(|| format!("{app}_database_"));
+    let app_name = get("APP_NAME", "laravel");
+    let prefix = env.get("REDIS_PREFIX").cloned().unwrap_or_else(|| {
+        let database_php = std::fs::read_to_string(site.path.join("config").join("database.php")).unwrap_or_default();
+        crate::redis::laravel_default_prefix(&database_php, &app_name)
+    });
+    // Horizon garde le slug avec « _ » dans toutes les versions
+    let app = crate::redis::laravel_slug(&app_name, '_');
     let (host, port) = (get("REDIS_HOST", "127.0.0.1"), get("REDIS_PORT", "6379").parse().unwrap_or(6379));
     let password = env.get("REDIS_PASSWORD").filter(|p| p.as_str() != "null").cloned();
     let dbi: u32 = get("REDIS_DB", "0").parse().unwrap_or(0);
