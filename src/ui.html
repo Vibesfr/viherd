@@ -1218,13 +1218,13 @@ function siteSettings(s) {
     ${s.proxy ? '' : setBlock('Version de PHP', 'Utilisée par php-cgi, les workers, le terminal et <span class="hl">viherd php</span>.', `<select class="inp" id="set-php" style="max-width:360px">${opts('php', s.php, s.php_pinned)}</select>`, '<span class="hl">viherd use php &lt;version&gt;</span>', `act('/api/site/php',{site:${J(s.name)},version:$('set-php').value},'PHP mis à jour','Application… (téléchargement si besoin)')`)}
     ${setBlock('Version de Node.js', 'Utilisée par <span class="hl">viherd npm</span>, Vite et les workers Node.', `<select class="inp" id="set-node" style="max-width:360px">${opts('node', s.node, s.node_pinned)}</select>`, '<span class="hl">viherd use node &lt;version&gt;</span>', `act('/api/site/node',{site:${J(s.name)},version:$('set-node').value},'Node mis à jour','Application… (téléchargement si besoin)')`)}
     ${setBlock('HTTPS', `Sert <span class="hl">https://${esc(s.name)}.${esc(S.tld)}</span> avec un certificat signé par l'autorité locale de Viherd ; le HTTP redirige vers HTTPS. Pense à mettre <span class="hl">APP_URL</span> en https dans le .env.`,
-      `<div class="st" style="gap:10px">${sw(s.secure, `secureSite(${J(s.name)},${!s.secure})`, s.secure ? 'Repasser en HTTP' : 'Servir en HTTPS')}<span>${s.secure ? 'Activé' : 'Désactivé'}</span>${s.secure && !S.ca_trusted ? `<button class="link" onclick="trustCa()">Approuver l'autorité dans Windows</button>` : ''}</div>`,
+      `<div class="st" style="gap:10px">${sw(s.secure, `secureSite(${JSON.stringify(s.name)},${!s.secure})`, s.secure ? 'Repasser en HTTP' : 'Servir en HTTPS')}<span>${s.secure ? 'Activé' : 'Désactivé'}</span>${s.secure && !S.ca_trusted ? `<button class="link" onclick="trustCa()">Approuver l'autorité dans Windows</button>` : ''}</div>`,
       '<span class="hl">viherd secure</span> · <span class="hl">viherd unsecure</span>')}
     ${s.proxy ? '' : setBlock('Xdebug', 'Débogage pas à pas : Xdebug se connecte à ton éditeur sur le port <span class="hl">9003</span> (VS Code : extension PHP Debug, « Listen for Xdebug »). Téléchargé au premier usage.',
-      `<div class="st" style="gap:10px">${sw(s.xdebug, `saveSite(${J(s.name)},{xdebug:${!s.xdebug}})`, s.xdebug ? 'Désactiver' : 'Activer')}<span>${s.xdebug ? 'Activé pour PHP, les workers et le terminal' : 'Désactivé'}</span></div>`,
+      `<div class="st" style="gap:10px">${sw(s.xdebug, `saveSite(${JSON.stringify(s.name)},{xdebug:${!s.xdebug}})`, s.xdebug ? 'Désactiver' : 'Activer')}<span>${s.xdebug ? 'Activé pour PHP, les workers et le terminal' : 'Désactivé'}</span></div>`,
       'Clé <span class="hl">xdebug = true</span> dans viherd.toml')}
     ${s.proxy ? '' : setBlock('Profilage', 'Mesure le temps passé dans chaque fonction PHP, requête par requête : ajoute <span class="hl">?XDEBUG_PROFILE=1</span> à une adresse et le profil apparaît dans l\'onglet Profilage. Avec le profilage actif, le débogage se déclenche aussi à la demande (<span class="hl">?XDEBUG_SESSION=1</span> ou l\'extension Xdebug Helper).',
-      `<div class="st" style="gap:10px">${sw(s.profile, `saveSite(${J(s.name)},{profile:${!s.profile}})`, s.profile ? 'Désactiver' : 'Activer')}<span>${s.profile ? 'Activé' : 'Désactivé'}</span></div>`,
+      `<div class="st" style="gap:10px">${sw(s.profile, `saveSite(${JSON.stringify(s.name)},{profile:${!s.profile}})`, s.profile ? 'Désactiver' : 'Activer')}<span>${s.profile ? 'Activé' : 'Désactivé'}</span></div>`,
       'Clé <span class="hl">profile = true</span> dans viherd.toml')}
     ${s.proxy ? '' : setBlock('Réglages php.ini', 'Propres à ce projet, appliqués après le php.ini de la version de PHP.', `<div class="kvs" id="set-ini">${Object.entries(s.php_ini || {}).map(([k, v]) => kvRow(k, v, 'memory_limit', '1G')).join('')}</div><button class="b sm" style="justify-self:start" onclick="addKv('set-ini','memory_limit','1G')">${ic('plus')}Ajouter un réglage</button>`, 'Section <span class="hl">[php_ini]</span>', `saveSite(${J(s.name)},{php_ini:Object.fromEntries([...document.querySelectorAll('#set-ini .kvr')].map(r=>[...r.querySelectorAll('input')].map(i=>i.value.trim())).filter(([k])=>k))})`)}
     ${setBlock('Routes proxifiées', 'HTTP et WebSocket vers un port local, par exemple <span class="hl">/app → 8080</span> pour Reverb.', `<div class="kvs" id="set-routes">${s.routes.map(r => kvRow(r.path, r.port, '/app', '8080')).join('')}</div><button class="b sm" style="justify-self:start" onclick="addKv('set-routes','/app','8080')">${ic('plus')}Ajouter une route</button>`, 'Section <span class="hl">[[routes]]</span>', `saveSite(${J(s.name)},{routes:[...document.querySelectorAll('#set-routes .kvr')].map(r=>{const[p,q]=r.querySelectorAll('input');return{path:p.value.trim(),port:parseInt(q.value,10)}}).filter(r=>r.path&&r.port)})`)}
@@ -1956,7 +1956,7 @@ function pServices(scrollRuntimes) {
           <span class="port">:${s.port}</span>
           <button class="b sm" title="Copier le bloc .env" onclick="event.stopPropagation();copy(${J(m.env(s))},'Bloc .env de ${svcName(s.name)} copié')">${ic('copy')}.env</button>
           <span class="stt">${dot(d)}${l}</span>
-          ${sw(s.enabled, `toggleSvc(${J(s.name)},${!s.enabled})`, s.enabled ? 'Arrêter' : 'Démarrer')}</div>`; }).join('')}</div>
+          ${sw(s.enabled, `toggleSvc(${JSON.stringify(s.name)},${!s.enabled})`, s.enabled ? 'Arrêter' : 'Démarrer')}</div>`; }).join('')}</div>
       <div class="box">
         <div class="svc on" onclick="go('mail')"><span class="svc-ic">${ic('inbox')}</span><div class="svc-t"><b>Mail</b><span>Serveur SMTP local : les mails sont capturés, jamais envoyés.</span></div><span class="port">:${S.smtp_port}</span><span class="stt">${dot('ok')}${S.mails} mail${S.mails > 1 ? 's' : ''}</span><span style="width:36px"></span></div>
         <div class="svc ${S.dumps_enabled ? 'on' : ''}" onclick="go('debug')"><span class="svc-ic">${ic('bug')}</span><div class="svc-t"><b>Dumps</b><span><span class="hl">dump()</span> et <span class="hl">dd()</span> affichés dans Viherd au lieu de la page.</span></div><span class="port">:${S.dump_port}</span><span class="stt">${dot(S.dumps_enabled ? 'ok' : '')}${S.dumps_enabled ? 'Interceptés' : 'Désactivés'}</span>
@@ -2037,7 +2037,7 @@ function drawExt() {
   const box = $('ext-list'); if (!box) return;
   const m = e => !EXT.q || e.name.includes(EXT.q) || (e.about || '').toLowerCase().includes(EXT.q);
   const row = e => `<div class="ext ${e.enabled ? 'on' : ''}"><div><b class="mono">${esc(e.name)}</b>${e.about ? `<span>${esc(e.about)}</span>` : ''}</div>
-    ${e.pecl && !e.installed ? `<em>${ic('dl')}à télécharger</em>` : ''}${sw(e.enabled, `toggleExt(${J(e.name)},${!e.enabled})`, e.enabled ? 'Désactiver' : 'Activer')}</div>`;
+    ${e.pecl && !e.installed ? `<em>${ic('dl')}à télécharger</em>` : ''}${sw(e.enabled, `toggleExt(${JSON.stringify(e.name)},${!e.enabled})`, e.enabled ? 'Désactiver' : 'Activer')}</div>`;
   const pecl = EXT.list.filter(e => e.pecl && m(e)), core = EXT.list.filter(e => !e.pecl && m(e));
   box.innerHTML = (pecl.length ? `<span class="ext-k">Courantes · PECL</span>${pecl.map(row).join('')}` : '')
     + (core.length ? `<span class="ext-k">Livrées avec PHP</span>${core.map(row).join('')}` : '')
@@ -2072,7 +2072,7 @@ function drawSheet() {
   const m = svcMeta(s), [d, l] = svcState(s);
   const tabs = [...(s.name === 'minio' ? [['license', 'Licence']] : []), ['logs', 'Logs'], ...(['mysql', 'postgres'].includes(s.name) ? [['db', 'Bases']] : []), ['env', '.env'], ['info', 'Infos']];
   $('sheet').innerHTML = `<div class="sh-h"><span class="svc-ic" style="color:var(--t1)">${ic(m.i)}</span><div><b>${svcName(s.name)}<span class="st dimt" style="font-size:13px;font-weight:400">${dot(d)}${l}</span></b><span>${esc(m.d)}</span></div>
-      ${sw(s.enabled, `toggleSvc(${J(s.name)},${!s.enabled})`, s.enabled ? 'Arrêter' : 'Démarrer')}<button class="ib" onclick="closeAll()" title="Fermer  Échap">${ic('x')}</button></div>
+      ${sw(s.enabled, `toggleSvc(${JSON.stringify(s.name)},${!s.enabled})`, s.enabled ? 'Arrêter' : 'Démarrer')}<button class="ib" onclick="closeAll()" title="Fermer  Échap">${ic('x')}</button></div>
     <nav class="sh-t">${tabs.map(([k, t]) => `<button class="tab ${sheetTab === k ? 'on' : ''}" onclick="sheetTab='${k}';drawSheet()"><span>${t}</span></button>`).join('')}</nav>
     <div class="sh-b">${sheetTab === 'logs' ? `<pre class="term" id="log"></pre>`
       : sheetTab === 'license' ? licenseTab(s)
