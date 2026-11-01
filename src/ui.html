@@ -483,6 +483,14 @@ table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: 
 .pick-warn { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--amber); }
 .pick-warn svg { flex: none; margin-top: 2px; }
 .pick-warn .link { color: var(--t1); }
+.notes { display: grid; gap: 8px; max-height: 300px; overflow: auto; padding: 4px 14px 14px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); font-size: 13px; color: var(--t2); }
+.notes h4 { margin: 10px 0 0; font-size: 13.5px; font-weight: 600; color: var(--t1); letter-spacing: -.01em; }
+.notes h4.ver { font-size: 11.5px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--t3); }
+.notes p, .modal .notes p { margin: 0; color: var(--t2); font-size: 13px; }
+.notes ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.notes li.cont { list-style: none; }
+.notes code { font: 12px var(--mono); color: var(--t1); }
+.notes a { color: var(--t1); text-decoration: underline; text-underline-offset: 3px; }
 .notes-pre { white-space: pre-wrap; font-size: 13px; color: var(--t2); max-height: 260px; overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; padding: 12px; background: var(--bg); }
 .bk > div span { font-size: 12.5px; color: var(--t3); font-family: var(--mono); }
 .dbstats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -2226,10 +2234,31 @@ $('pal-in').onkeydown = e => {
    Clavier : Ctrl K, G puis lettre, /, N, A, Shift T, J/K entre sites
    ===================================================================== */
 /* ---------- mise à jour de Viherd ---------- */
+/* Markdown des notes de version : titres, listes, paragraphes, **gras**, `code`, liens. Tout est échappé d'abord. */
+function mdLite(src) {
+  const inline = s => esc(s)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
+    .replace(/\[([^\]]+)\]\((https:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank">$1</a>')
+    .replace(/(^|[\s(])(https:\/\/[^\s<)]*[^\s<).,;:!?])/g, '$1<a href="$2" target="_blank">$2</a>');
+  let html = '', list = false, para = [];
+  const flush = () => { if (para.length) { html += `<p>${inline(para.join(' '))}</p>`; para = []; } if (list) { html += '</ul>'; list = false; } };
+  for (const raw of src.split(/\r?\n/)) {
+    const l = raw.trim();
+    if (!l) { flush(); continue; }
+    const h = l.match(/^(#{1,4})\s+(.*)/), li = l.match(/^[-*]\s+(.*)/);
+    if (h) { flush(); html += `<h4 class="${h[1].length <= 2 ? 'ver' : ''}">${inline(h[2])}</h4>`; }
+    else if (li) { if (para.length) flush(); if (!list) { html += '<ul>'; list = true; } html += `<li>${inline(li[1])}</li>`; }
+    else if (list) html += `<li class="cont">${inline(l)}</li>`;
+    else para.push(l);
+  }
+  flush();
+  return html;
+}
 function dlgUpdate() {
   const u = S.update; if (!u) return checkUpdate();
   modal(`<div class="m-b"><h3>Viherd v${esc(u.version)} est disponible</h3><p>Tu as la v${esc(S.version)}. L'installeur arrête Viherd le temps de la mise à jour ; sites, bases et réglages sont conservés.</p>
-      ${u.notes ? `<div class="notes-pre">${esc(u.notes)}</div>` : ''}</div>
+      ${u.notes ? `<div class="notes">${mdLite(u.notes.split(/\r?\n---\s*(\r?\n|$)/)[0])}</div>` : ''}</div>
     <div class="m-f"><span>${u.page ? `<a class="link" href="${esc(u.page)}" target="_blank">Voir la release</a>` : ''}</span><button class="b ghost" onclick="closeAll()">Plus tard</button>
       <button class="b pri" onclick="closeAll();act('/api/update/install',{},'Installeur lancé : suis ses étapes','Téléchargement de la mise à jour…')">Installer</button></div>`);
 }

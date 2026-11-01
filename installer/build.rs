@@ -2,7 +2,21 @@
 //! Dossier source : target/release, ou VIHERD_DIST pour en choisir un autre.
 use std::path::PathBuf;
 
+#[path = "../src/icon.rs"]
+#[allow(dead_code)]
+mod icon;
+
 fn main() {
+    // icône de viherd-setup.exe
+    println!("cargo:rerun-if-changed=../src/icon.rs");
+    let ico = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("viherd.ico");
+    std::fs::write(&ico, icon::ico()).expect("viherd.ico");
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon(ico.to_str().unwrap())
+        .set("ProductName", "Viherd")
+        .set("FileDescription", "Installeur de Viherd");
+    res.compile().expect("ressources Windows (icône) : rc.exe du SDK Windows introuvable ?");
+
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("..");
     let dist = std::env::var("VIHERD_DIST").map(PathBuf::from).unwrap_or_else(|_| root.join("target").join("release"));
     println!("cargo:rerun-if-env-changed=VIHERD_DIST");

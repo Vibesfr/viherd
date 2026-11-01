@@ -18,6 +18,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # historique et tags pour les notes de version
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -32,6 +34,9 @@ jobs:
           path: target/release/viherd-setup.exe
       - name: Release GitHub
         if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" target/release/viherd-setup.exe --title "Viherd ${{ github.ref_name }}" --generate-notes
+        run: |
+          scripts/release-notes.sh "${{ github.ref_name }}" > notes.md
+          gh release create "${{ github.ref_name }}" target/release/viherd-setup.exe --title "Viherd ${{ github.ref_name }}" --notes-file notes.md

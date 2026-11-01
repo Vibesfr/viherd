@@ -40,12 +40,34 @@ pub async fn check() -> Result<Option<Available>> {
         .find(|a| a["name"] == ASSET)
         .and_then(|a| a["browser_download_url"].as_str())
         .ok_or_else(|| anyhow!("la release v{version} n'a pas de {ASSET}"))?;
+    // notes de toutes les versions sautées (0.2.1 → 0.2.4 : celles de 0.2.2, 0.2.3 et 0.2.4)
+    let notes = match client().get(format!("https://api.github.com/repos/{REPO}/releases?per_page=30"))
+        .header("Accept", "application/vnd.github+json").send().await.and_then(|r| r.error_for_status())
+    {
+        Ok(r) => r.json::<Vec<serde_json::Value>>().await.map(|all| combined_notes(&all, crate::VERSION)).unwrap_or_default(),
+        Err(_) => String::new(),
+    };
     Ok(Some(Available {
         version,
         url: url.to_string(),
         page: rel["html_url"].as_str().unwrap_or("").to_string(),
-        notes: rel["body"].as_str().unwrap_or("").chars().take(4000).collect(),
+        notes: if notes.is_empty() { rel["body"].as_str().unwrap_or("").to_string() } else { notes }.chars().take(12_000).collect(),
     }))
+}
+
+/// Notes des releases plus récentes que `current`, de la plus récente à la plus ancienne,
+/// chacune sous un titre « Version X.Y.Z » (sans le pied de page « --- » ni le titre « Nouveautés »).
+fn combined_notes(releases: &[serde_json::Value], current: &str) -> String {
+    let mut list: Vec<(&str, &str)> = releases.iter()
+        .filter(|r| r["draft"] != true && r["prerelease"] != true)
+        .filter_map(|r| Some((r["tag_name"].as_str()?.trim_start_matches('v'), r["body"].as_str().unwrap_or(""))))
+        .filter(|(v, _)| newer(v, current))
+        .collect();
+    list.sort_by(|a, b| if newer(a.0, b.0) { std::cmp::Ordering::Less } else { std::cmp::Ordering::Greater });
+    list.iter().map(|(v, body)| {
+        let body = body.split("\n---").next().unwrap_or("").replace("## Nouveautés", "");
+        format!("## Version {v}\n\n{}", body.trim())
+    }).collect::<Vec<_>>().join("\n\n")
 }
 
 /// `a` est-elle plus récente que `b` ? (comparaison numérique 1.10.0 > 1.9.3, suffixes -beta ignorés)
@@ -80,7 +102,20 @@ pub fn launch(setup: &std::path::Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::newer;
+    use super::{combined_notes, newer};
+
+    #[test]
+    fn combines_notes_of_skipped_versions() {
+        let rel = |v: &str, body: &str| serde_json::json!({ "tag_name": v, "body": body, "draft": false, "prerelease": false });
+        let all = [
+            rel("v0.2.2", "## Nouveautés\n\n### Dossiers\n- Parcourir\n\n---\n\nInstaller…"),
+            rel("v0.2.3", "## Nouveautés\n\n### Icône"),
+            rel("v0.2.1", "## Nouveautés\n\n### Tables"),
+            serde_json::json!({ "tag_name": "v0.3.0", "body": "brouillon", "draft": true }),
+        ];
+        let n = combined_notes(&all, "0.2.1");
+        assert_eq!(n, "## Version 0.2.3\n\n### Icône\n\n## Version 0.2.2\n\n### Dossiers\n- Parcourir");
+    }
 
     #[test]
     fn compares_versions_numerically() {
