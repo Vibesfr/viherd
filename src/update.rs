@@ -24,7 +24,12 @@ pub async fn check() -> Result<Option<Available>> {
     let r = client().get(format!("https://api.github.com/repos/{REPO}/releases/latest"))
         .header("Accept", "application/vnd.github+json").send().await?;
     if r.status() == reqwest::StatusCode::NOT_FOUND {
-        return Ok(None);
+        // 404 aussi pour un dépôt privé : ne pas annoncer « à jour » à tort
+        let repo = client().get(format!("https://api.github.com/repos/{REPO}")).send().await?;
+        if repo.status() == reqwest::StatusCode::NOT_FOUND {
+            anyhow::bail!("le dépôt GitHub {REPO} est privé ou introuvable : mises à jour indisponibles");
+        }
+        return Ok(None); // dépôt public sans release
     }
     let rel: serde_json::Value = r.error_for_status()?.json().await?;
     let version = rel["tag_name"].as_str().unwrap_or("").trim_start_matches('v').to_string();
