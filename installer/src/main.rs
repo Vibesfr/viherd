@@ -227,6 +227,8 @@ fn do_install(opts: &Value, step: &impl Fn(&str, &str)) -> Result<()> {
     let [desktop, start] = &shortcuts()[..] else { bail!("dossiers Bureau / Menu Démarrer introuvables") };
     make_shortcut(start, &app)?;
     if opt(opts, "desktop") { make_shortcut(desktop, &app)?; } else { let _ = std::fs::remove_file(desktop); }
+    // sinon Windows garde l'ancienne icône en cache (raccourcis, barre des tâches) après une mise à jour
+    let _ = Command::new("ie4uinit.exe").arg("-show").creation_flags(CREATE_NO_WINDOW).status();
 
     if opt(opts, "autostart") {
         reg(&["add", RUN_KEY, "/v", "Viherd", "/t", "REG_SZ", "/d", &format!("\"{}\"", app.display()), "/f"])?;
