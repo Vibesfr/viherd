@@ -3860,7 +3860,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "viherd"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3894,7 +3894,7 @@ dependencies = [
 
 [[package]]
 name = "viherd-setup"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "serde_json",
