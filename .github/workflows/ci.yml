@@ -1,24 +1,30 @@
 name: CI
 
+# Tests seulement : rapide à chaque push. Le build release et l'installeur sont dans release.yml (tags v*).
 on:
   push:
     branches: [main]
   pull_request:
 
+# un nouveau push annule le run précédent de la même branche
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # pas d'infos de débogage : compilation plus rapide, cache plus petit
+  CARGO_PROFILE_DEV_DEBUG: 0
+
 jobs:
-  build:
+  test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # les PR réutilisent le cache de main sans le réécrire
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Tests
         run: cargo test --locked
-      - name: Build release
-        run: cargo build --release --locked --bin viherd --bin viherd-app
-      - name: Installeur
-        run: cargo build --release --locked -p viherd-setup
-      - uses: actions/upload-artifact@v4
-        with:
-          name: viherd-setup
-          path: target/release/viherd-setup.exe

@@ -39,7 +39,7 @@ un superviseur de workers et des services gérés, pilotés depuis une vraie app
 
 ### Avec l'installeur
 
-Lance **`viherd-setup.exe`** : installation dans `%LOCALAPPDATA%\Programs\Viherd`, sans droits administrateur,
+Télécharge **`viherd-setup.exe`** depuis les [releases](https://github.com/Vibesfr/viherd/releases) et lance-le : installation dans `%LOCALAPPDATA%\Programs\Viherd`, sans droits administrateur,
 avec la commande `viherd` dans le `PATH`, les raccourcis, le démarrage automatique en option et une entrée
 dans « Applications installées » pour désinstaller. Relancer l'installeur met à jour Viherd.
 
@@ -233,8 +233,10 @@ src/
 installer/          viherd-setup.exe : fenêtre WebView sans bordure, interface dans installer/src/ui.html
 ```
 
-`cargo test` lance les tests unitaires ; la CI GitHub Actions compile et teste sous Windows
-et publie `viherd-setup.exe` en artefact.
+`cargo test` lance les tests unitaires ; la CI GitHub Actions les relance sous Windows à chaque push.
+Pour publier une version, mets à jour `version` dans `Cargo.toml` puis pousse un tag :
+`git tag v0.2.0` puis `git push origin v0.2.0`. Le workflow *Release* compile en mode optimisé et crée
+la release GitHub avec `viherd-setup.exe`.
 
 L'interface de l'installeur est une simple page HTML : pour la retoucher, ouvre
 `installer/src/ui.html` dans un navigateur (les boutons s'y affichent dans la console),

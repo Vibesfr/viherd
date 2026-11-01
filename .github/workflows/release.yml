@@ -1,0 +1,37 @@
+name: Release
+
+# git tag v0.2.0 && git push origin v0.2.0 → build optimisé + release GitHub avec viherd-setup.exe.
+# Lançable aussi à la main (Actions → Release → Run workflow) : l'installeur est alors un artefact du run.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release
+      - name: Build release
+        run: cargo build --release --locked --bin viherd --bin viherd-app
+      - name: Installeur
+        run: cargo build --release --locked -p viherd-setup
+      - uses: actions/upload-artifact@v4
+        with:
+          name: viherd-setup
+          path: target/release/viherd-setup.exe
+      - name: Release GitHub
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" target/release/viherd-setup.exe --title "Viherd ${{ github.ref_name }}" --generate-notes
