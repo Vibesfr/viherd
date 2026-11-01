@@ -22,7 +22,8 @@ un superviseur de workers et des services gérés, pilotés depuis une vraie app
 | | |
 |---|---|
 | **Sites** | `*.test` par dossier parqué ou lié, fichiers statiques, apps Node en proxy (`proxy = 3000`) |
-| **PHP & Node isolés** | chaque projet a sa version (`viherd.toml`), son propre `php-cgi` et un `PATH` qui ne contient que ses binaires |
+| **PHP & Node isolés** | chaque projet a sa version (`viherd.toml`), son propre `php-cgi` et un `PATH` qui ne contient que ses binaires ; dernières versions publiées listées, mise à jour d'une branche en un clic |
+| **Extensions PHP** | activer / désactiver par version de PHP ; APCu, Imagick, MongoDB, PCOV, SQL Server… téléchargées à la demande (PECL) |
 | **Workers & queues** | queue, scheduler, Horizon, Reverb, Pulse, Vite… supervisés, redémarrage auto, détection des crash-loops, logs en direct |
 | **Files Laravel** | jobs en attente / en cours / différés / échoués par file (`database` ou `redis`), état d'Horizon, relancer, vider, `queue:restart` |
 | **HTTPS local** | `viherd secure` : autorité de certification locale approuvée dans Windows, certificat par site généré à la volée |
@@ -80,6 +81,7 @@ cd mon-app
 viherd init                  # crée viherd.toml
 viherd use php 8.3           # ce projet utilise PHP 8.3
 viherd use node 20
+viherd ext                   # extensions de son PHP ; `viherd ext apcu` active (et télécharge), `viherd ext gd off`
 
 viherd service postgres on   # ou mysql, redis, rustfs, meilisearch…
 viherd hosts                 # (admin) ajoute les *.test au fichier hosts

@@ -66,6 +66,15 @@ enum Cmd {
     Status,
     /// Recharge la config dans le démon (après avoir modifié un viherd.toml)
     Reload,
+    /// Extensions PHP du projet courant : `viherd ext`, `viherd ext apcu`, `viherd ext gd off`
+    Ext {
+        name: Option<String>,
+        /// on (défaut) ou off
+        state: Option<String>,
+        /// Version de PHP (sinon celle du projet courant)
+        #[arg(long)]
+        php: Option<String>,
+    },
     /// Installe la dernière version de Viherd publiée sur GitHub
     Update,
     /// Importe la configuration de Laravel Herd (sites, HTTPS, versions de PHP, .env)
@@ -259,6 +268,26 @@ async fn run(cli: Cli) -> Result<i32> {
                 println!("✔ installeur lancé : suis les étapes dans sa fenêtre");
             }
         },
+        Cmd::Ext { name, state, php } => {
+            let g = Global::load()?;
+            let php = php.unwrap_or_else(|| Project::load(&find_project_root(&cwd)).ok().and_then(|p| p.php).unwrap_or(g.default_php.clone()));
+            versions::ensure_php(&php).await?;
+            match name {
+                None => {
+                    println!("PHP {php} — ✔ activée · ○ disponible · ↓ à télécharger");
+                    for e in viherd::php_ext::list(&php)? {
+                        let mark = if e.enabled { "✔" } else if e.installed { "○" } else { "↓" };
+                        println!("  {mark} {:<12} {}", e.name, e.about.unwrap_or(""));
+                    }
+                }
+                Some(n) => {
+                    let on = !matches!(state.as_deref(), Some("off" | "disable" | "false" | "0"));
+                    viherd::php_ext::set(&php, &n.to_lowercase(), on).await?;
+                    println!("✔ {n} {} pour PHP {php}", if on { "activée" } else { "désactivée" });
+                    notify_reload().await;
+                }
+            }
+        }
         Cmd::Herd { yes } => return import_herd(yes).await,
         Cmd::Mcp => viherd::mcp::serve().await?,
     }

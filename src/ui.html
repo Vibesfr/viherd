@@ -483,6 +483,16 @@ table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: 
 .pick-warn { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; color: var(--amber); }
 .pick-warn svg { flex: none; margin-top: 2px; }
 .pick-warn .link { color: var(--t1); }
+/* extensions PHP */
+.ext-list { display: grid; max-height: 46vh; overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); }
+.ext-k { position: sticky; top: 0; z-index: 1; padding: 8px 14px; font-size: 11.5px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--t3); background: var(--bg); border-bottom: 1px solid var(--line); }
+.ext { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+.ext:last-child { border-bottom: 0; }
+.ext > div { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.ext b { font-weight: 500; font-size: 13px; }
+.ext > div span { font-size: 12.5px; color: var(--t3); }
+.ext em { font-style: normal; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--t3); white-space: nowrap; }
+.ext em svg { width: 12px; height: 12px; }
 .notes { display: grid; gap: 8px; max-height: 300px; overflow: auto; padding: 4px 14px 14px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); font-size: 13px; color: var(--t2); }
 .notes h4 { margin: 10px 0 0; font-size: 13.5px; font-weight: 600; color: var(--t1); letter-spacing: -.01em; }
 .notes h4.ver { font-size: 11.5px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--t3); }
@@ -1953,7 +1963,7 @@ function pServices(scrollRuntimes) {
           ${sw(S.dumps_enabled, `act('/api/settings',{dumps:${!S.dumps_enabled}},'Réglage appliqué','Application…')`, 'Intercepter les dumps')}</div></div>
     </div>
     <section class="blk" id="runtimes"><div class="blk-h"><h2 class="lg">Runtimes</h2><span class="lnk" onclick="dlgInstall()">Installer une version…</span></div>
-      <div class="rts">${rtCard('php', 'PHP', 'php', ['8.4', '8.3', '8.2', '8.1'])}${rtCard('node', 'Node.js', 'node', ['24', '22', '20', '18'])}
+      <div class="rts">${rtCard('php', 'PHP', 'php')}${rtCard('node', 'Node.js', 'node')}
         <div class="box"><div class="rt-h">${ic('box')}<b>Composer</b>${S.installed.composer ? '' : `<button class="link" onclick="install('composer','')">Installer</button>`}</div>
           <div class="rtv ${S.installed.composer ? '' : 'off'}"><span class="v">${S.installed.composer ? 'installé' : '—'}</span><span class="u">${S.installed.composer ? 'global · utilise le PHP du projet' : 'non installé'}</span>${S.installed.composer ? '<span class="badge">Défaut</span>' : ''}</div>
           <div class="rtv"><span class="u mono" style="font-size:12px">viherd composer install</span></div></div></div>
@@ -1962,19 +1972,83 @@ viherd php -v            viherd artisan migrate      viherd composer install
 viherd npm run dev       viherd use php 8.3          viherd use node 20</pre></section>
   </div>`);
   if (scrollRuntimes) requestAnimationFrame(() => $('runtimes')?.scrollIntoView({ block: 'start' }));
+  if (!VERS) loadVersions();
 }
-function rtCard(kind, title, icon, sugg) {
+
+/* ---------- versions publiées (PHP, Node) et versions exactes installées ---------- */
+let VERS = null;
+async function loadVersions(force) {
+  if (VERS && !force) return VERS;
+  try { VERS = await apiGet('/api/versions', {}); } catch { VERS = { php: [], node: [], error: 'hors ligne' }; }
+  if (route()[0] === 'services' || route()[0] === 'runtimes') { const k = $('main').scrollTop; render(); $('main').scrollTop = k; }
+  return VERS;
+}
+/* versions proposées au téléchargement : PHP 8.1 et plus, Node 18 et plus (dernière de chaque branche) */
+const publishedOf = kind => (VERS?.[kind] || []).filter(r => r.latest && (kind === 'node' || parseFloat(r.v) >= 8.1));
+const verLabel = (kind, r) => r.latest ? `${kind === 'php' ? 'PHP' : 'Node'} ${r.latest}${r.lts ? ' · LTS ' + r.lts : ''}` : '';
+function rtCard(kind, title, icon) {
   const list = S.installed[kind], def = kind === 'php' ? S.default_php : S.default_node;
   const users = v => S.sites.filter(s => (kind === 'php' ? !s.proxy && s.php : s.node) === v).map(s => s.name);
+  const info = v => (VERS?.[kind] || []).find(r => r.v === v) || {};
   const all = [...new Set([...list, def])].sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
-  const avail = sugg.filter(v => !all.includes(v));
-  return `<div class="box"><div class="rt-h">${ic(icon)}<b>${title}</b><button class="link" onclick="installMenu(this,'${kind}',${J(avail)})">Installer</button></div>
-    ${all.map(v => { const ok = list.includes(v), u = users(v); return `<div class="rtv ${ok ? '' : 'off'}"><span class="v">${esc(v)}</span><span class="u" title="${esc(u.join(', '))}">${ok ? (u.length ? esc(u.join(', ')) : 'aucun site') : 'non installé'}</span>
-      ${v === def ? '<span class="badge">Défaut</span>' : ok ? `<button class="b sm hov" onclick="act('/api/defaults',{${kind}:${J(v)}},'${title} ${esc(v)} par défaut')">Par défaut</button>` : ''}
-      ${ok ? '' : `<button class="b sm" onclick="install('${kind}',${J(v)})">${ic('dl')}Installer</button>`}</div>`; }).join('')}</div>`;
+  const avail = publishedOf(kind).filter(r => !all.includes(r.v));
+  const newest = publishedOf(kind)[0];
+  return `<div class="box"><div class="rt-h">${ic(icon)}<b>${title}</b>${newest && !all.includes(newest.v) ? `<span class="badge">${esc(newest.latest)} disponible</span>` : ''}<button class="link" onclick="installMenu(this,'${kind}')">Installer</button></div>
+    ${all.map(v => { const ok = list.includes(v), u = users(v), r = info(v), outdated = ok && r.current && r.latest && r.current !== r.latest;
+      return `<div class="rtv ${ok ? '' : 'off'}"><span class="v">${esc(v)}</span>
+        <span class="u" title="${esc(u.join(', '))}">${ok ? `${r.current ? `<span class="mono">${esc(r.current)}</span> · ` : ''}${u.length ? esc(u.join(', ')) : 'aucun site'}` : 'non installé'}</span>
+        ${outdated ? `<button class="b sm" title="${esc(r.current)} → ${esc(r.latest)} : php.ini et extensions conservés" onclick="updateRuntime('${kind}',${J(v)},${J(r.latest)})">${ic('refresh')}${esc(r.latest)}</button>` : ''}
+        ${ok && kind === 'php' ? `<button class="b sm" onclick="dlgExt(${J(v)})">Extensions</button>` : ''}
+        ${v === def ? '<span class="badge">Défaut</span>' : ok ? `<button class="b sm hov" onclick="act('/api/defaults',{${kind}:${J(v)}},'${title} ${esc(v)} par défaut')">Par défaut</button>` : ''}
+        ${ok ? '' : `<button class="b sm" onclick="install('${kind}',${J(v)})">${ic('dl')}Installer</button>`}</div>`; }).join('')}
+    ${avail.slice(0, kind === 'php' ? 3 : 4).map(r => `<div class="rtv off"><span class="v">${esc(r.v)}</span><span class="u">${esc(verLabel(kind, r))}</span>
+      <button class="b sm hov" onclick="install('${kind}',${J(r.v)})">${ic('dl')}Installer</button></div>`).join('')}
+    ${!VERS ? `<div class="rtv"><span class="u">Recherche des dernières versions…</span></div>` : VERS.error ? `<div class="rtv"><span class="u">Dernières versions indisponibles (${esc(VERS.error)})</span></div>` : ''}</div>`;
 }
-function installMenu(a, kind, avail) {
-  popover(a, { width: 240, items: [{ label: `Installer ${kind === 'php' ? 'PHP' : 'Node.js'}` }, ...avail.map(v => ({ text: v, icon: ic('dl'), run: () => install(kind, v) })), ...(avail.length ? [{ sep: 1 }] : []), { text: 'Autre version…', icon: ic('plus'), run: dlgInstall }] });
+async function installMenu(a, kind) {
+  await loadVersions();
+  const have = S.installed[kind], avail = publishedOf(kind).filter(r => !have.includes(r.v));
+  popover(a, { width: 280, items: [{ label: `Installer ${kind === 'php' ? 'PHP' : 'Node.js'}` },
+    ...avail.map(r => ({ text: r.v, html: `<span class="mono">${esc(r.v)}</span> <span style="color:var(--t3)">${esc(r.latest)}${r.lts ? ' · LTS' : ''}</span>`, icon: ic('dl'), run: () => install(kind, r.v) })),
+    ...(avail.length ? [{ sep: 1 }] : []), { text: 'Autre version…', icon: ic('plus'), run: dlgInstall }] });
+}
+async function updateRuntime(kind, v, latest) {
+  if (!confirm(`Mettre à jour ${kind === 'php' ? 'PHP' : 'Node'} ${v} en ${latest} ?\nLes sites et workers qui l'utilisent redémarrent ; ferme les terminaux ouverts avec cette version.`)) return;
+  try { await act('/api/runtime/update', { tool: kind, version: v }, `${kind === 'php' ? 'PHP' : 'Node'} ${v} mis à jour en ${latest}`, `Mise à jour de ${kind === 'php' ? 'PHP' : 'Node'} ${v}…`); } catch {}
+  loadVersions(true);
+}
+
+/* ---------- extensions PHP d'une version ---------- */
+let EXT = { php: null, list: [], q: '' };
+async function dlgExt(php) {
+  EXT = { php, list: [], q: '' };
+  modal(`<div class="m-b"><h3>Extensions · PHP ${esc(php)}</h3><p>Pour tous les sites en PHP ${esc(php)}. PHP et les workers redémarrent tout seuls ; les extensions PECL sont téléchargées à l'activation.</p>
+    <label class="field sm">${ic('search')}<input id="ext-q" placeholder="Rechercher une extension" oninput="EXT.q=this.value.toLowerCase();drawExt()"></label>
+    <div id="ext-list" class="ext-list"><div class="empty">Chargement…</div></div>
+    <p class="dim" style="font-size:12.5px">Aussi en ligne de commande : <span class="hl">viherd ext apcu</span> · <span class="hl">viherd ext gd off</span>. Xdebug se règle par site.</p></div>
+    <div class="m-f"><span></span><button class="b pri" onclick="closeAll()">Fermer</button></div>`);
+  loadExt();
+}
+async function loadExt() {
+  try { EXT.list = (await apiGet('/api/php/extensions', { php: EXT.php })).extensions; drawExt(); }
+  catch (e) { $('ext-list').innerHTML = `<div class="note err">${esc(e.message)}</div>`; }
+}
+function drawExt() {
+  const box = $('ext-list'); if (!box) return;
+  const m = e => !EXT.q || e.name.includes(EXT.q) || (e.about || '').toLowerCase().includes(EXT.q);
+  const row = e => `<div class="ext ${e.enabled ? 'on' : ''}"><div><b class="mono">${esc(e.name)}</b>${e.about ? `<span>${esc(e.about)}</span>` : ''}</div>
+    ${e.pecl && !e.installed ? `<em>${ic('dl')}à télécharger</em>` : ''}${sw(e.enabled, `toggleExt(${J(e.name)},${!e.enabled})`, e.enabled ? 'Désactiver' : 'Activer')}</div>`;
+  const pecl = EXT.list.filter(e => e.pecl && m(e)), core = EXT.list.filter(e => !e.pecl && m(e));
+  box.innerHTML = (pecl.length ? `<span class="ext-k">Courantes · PECL</span>${pecl.map(row).join('')}` : '')
+    + (core.length ? `<span class="ext-k">Livrées avec PHP</span>${core.map(row).join('')}` : '')
+    || `<div class="empty">Aucune extension « ${esc(EXT.q)} »</div>`;
+}
+async function toggleExt(name, on) {
+  const e = EXT.list.find(x => x.name === name);
+  const b = toast(on ? (e && !e.installed ? `Téléchargement de ${name}…` : `Activation de ${name}…`) : `Désactivation de ${name}…`, 'busy');
+  try { await apiPost('/api/php/extension', { php: EXT.php, name, on }); toast(`${name} ${on ? 'activée' : 'désactivée'} pour PHP ${EXT.php}`); }
+  catch (err) { toast(err.message, 'err', 9000); }
+  finally { b.remove(); loadExt(); }
 }
 async function toggleSvc(name, on) {
   const sv = S.services.find(x => x.name === name);
@@ -2069,7 +2143,8 @@ function popover(anchor, { items, search, onPick, width, up, onClose }) {
 }
 function verMenu(anchor, kind, site) {
   const s = siteOf(site), list = S.installed[kind], def = kind === 'php' ? S.default_php : S.default_node, cur = kind === 'php' ? s.php : s.node, pinned = kind === 'php' ? s.php_pinned : s.node_pinned;
-  const sugg = kind === 'php' ? ['8.4', '8.3', '8.2', '8.1'] : ['24', '22', '20', '18'];
+  const sugg = publishedOf(kind).map(r => r.v);
+  if (!VERS) loadVersions(); // la liste « À télécharger » sera complète à la prochaine ouverture
   popover(anchor, {
     search: `Version de ${kind === 'php' ? 'PHP' : 'Node'}…`, width: 240,
     items: [{ text: `Par défaut (${def})`, v: '', checked: !pinned }, { label: 'Installées' }, ...list.map(v => ({ text: v, v, checked: pinned && v === cur })),

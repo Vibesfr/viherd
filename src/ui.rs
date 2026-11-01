@@ -444,6 +444,54 @@ async fn route(req: Request<Incoming>, st: &Arc<State>) -> Result<Response<Body>
             }
             ok()
         }
+        // ---------- versions de PHP / Node : dernières publiées, version exacte installée, mise à jour ----------
+        ("GET", "/api/versions") => {
+            let avail = versions::available().await;
+            let g = st.global.read().unwrap().clone();
+            let mut out = serde_json::Map::new();
+            for tool in ["php", "node"] {
+                let dir = paths::home().join("bin").join(tool);
+                let list = avail.as_ref().ok().and_then(|a| a[tool].as_array().cloned()).unwrap_or_default();
+                let inst = installed(&dir);
+                let mut rows: Vec<Value> = list.iter().map(|a| {
+                    let v = a["v"].as_str().unwrap_or("").to_string();
+                    j!({ "v": v, "latest": a["latest"], "lts": a["lts"], "installed": inst.contains(&v),
+                         "current": inst.contains(&v).then(|| versions::installed_version(tool, &v)).flatten() })
+                }).collect();
+                // installées mais plus listées (anciennes branches) : affichées quand même
+                for v in inst.iter().filter(|v| !list.iter().any(|a| a["v"] == v.as_str())) {
+                    rows.push(j!({ "v": v, "latest": null, "lts": null, "installed": true, "current": versions::installed_version(tool, v) }));
+                }
+                out.insert(tool.into(), j!(rows));
+            }
+            out.insert("default_php".into(), j!(g.default_php));
+            out.insert("default_node".into(), j!(g.default_node));
+            out.insert("error".into(), j!(avail.err().map(|e| format!("{e:#}"))));
+            json(Value::Object(out))
+        }
+        ("POST", "/api/runtime/update") => {
+            let (tool, v) = (s("tool"), s("version"));
+            if !["php", "node"].contains(&tool.as_str()) { bail!("outil inconnu: {tool}"); }
+            // php-cgi et les workers verrouillent les fichiers : on arrête tout, on remplace, on relance
+            st.php.stop_all().await;
+            for k in st.sup.list().into_iter().filter(|k| k.starts_with("site:")) { st.sup.stop(&k); }
+            for _ in 0..50 {
+                let busy = st.sup.statuses().iter().any(|(k, s)| k.starts_with("site:") && matches!(s.state.as_str(), "running" | "starting" | "stopping"));
+                if !busy { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            }
+            let r = versions::update_runtime(&tool, &v).await;
+            daemon::reload(st).await?;
+            json(j!({ "ok": true, "version": r? }))
+        }
+        ("GET", "/api/php/extensions") => json(j!({ "php": q("php"), "extensions": crate::php_ext::list(&q("php"))? })),
+        ("POST", "/api/php/extension") => {
+            let on = body.get("on").and_then(|v| v.as_bool()).unwrap_or(true);
+            crate::php_ext::set(&s("php"), &s("name"), on).await?;
+            daemon::reload(st).await?; // php-cgi et workers relancés avec le nouveau php.ini
+            ok()
+        }
+
         ("POST", "/api/defaults") => {
             let mut g = Global::load()?;
             if !s("php").is_empty() { g.default_php = s("php"); }

@@ -15,6 +15,7 @@ pub mod icon;
 pub mod mail;
 pub mod mcp;
 pub mod paths;
+pub mod php_ext;
 pub mod php_pool;
 pub mod profiler;
 pub mod redis;
