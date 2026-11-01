@@ -17,7 +17,7 @@ pub fn project_env(g: &Global, root: &Path, project: &Project) -> Vec<(String, S
     if let Some(d) = dump_target(g) {
         v.push(("VAR_DUMPER_FORMAT".to_string(), d));
     }
-    if let Some(dir) = project_ini_dir(root, project, &php) {
+    if let Some(dir) = project_ini_dir(root, project, &php, &crate::profiler::dir(root)) {
         // php-cgi comme php CLI lisent les .ini de ce dossier après php.ini
         v.push(("PHP_INI_SCAN_DIR".to_string(), dir.display().to_string()));
     }
@@ -25,20 +25,30 @@ pub fn project_env(g: &Global, root: &Path, project: &Project) -> Vec<(String, S
     v
 }
 
-/// Contenu du .ini propre au projet : Xdebug et réglages `[php_ini]` du viherd.toml.
-pub fn project_ini(project: &Project, php_dir: &Path) -> String {
+/// Contenu du .ini propre au projet : Xdebug (débogage, profilage) et réglages `[php_ini]` du viherd.toml.
+pub fn project_ini(project: &Project, php_dir: &Path, profiles: &Path) -> String {
     let mut out = String::from("; généré par Viherd depuis viherd.toml — ne pas modifier\r\n");
     let dll = php_dir.join("ext").join("php_xdebug.dll");
-    if project.xdebug && dll.is_file() {
-        for l in [
+    if project.needs_xdebug() && dll.is_file() {
+        let mut modes = vec![];
+        if project.xdebug { modes.extend(["debug", "develop"]); }
+        if project.profile { modes.push("profile"); }
+        let mut lines = vec![
             format!("zend_extension=\"{}\"", dll.display()),
-            "xdebug.mode=debug,develop".into(),
-            "xdebug.start_with_request=yes".into(),
+            format!("xdebug.mode={}", modes.join(",")),
+            // avec le profiler, tout passe par un déclencheur (?XDEBUG_PROFILE=1, ?XDEBUG_SESSION=1)
+            format!("xdebug.start_with_request={}", if project.profile { "trigger" } else { "yes" }),
             "xdebug.client_host=127.0.0.1".into(),
             "xdebug.client_port=9003".into(),
             // pas d'avertissement à chaque requête quand aucun éditeur n'écoute
             "xdebug.log_level=0".into(),
-        ] {
+        ];
+        if project.profile {
+            lines.push(format!("xdebug.output_dir=\"{}\"", profiles.display()));
+            lines.push("xdebug.profiler_output_name=cachegrind.out.%t.%R".into());
+            lines.push("xdebug.use_compression=0".into());
+        }
+        for l in lines {
             out.push_str(&l);
             out.push_str("\r\n");
         }
@@ -51,15 +61,16 @@ pub fn project_ini(project: &Project, php_dir: &Path) -> String {
 }
 
 /// Écrit le .ini du projet dans ~/.viherd/ini/<projet>/ et renvoie ce dossier (None s'il n'y a rien à régler).
-fn project_ini_dir(root: &Path, project: &Project, php_dir: &Path) -> Option<PathBuf> {
-    if !project.xdebug && project.php_ini.is_empty() {
+fn project_ini_dir(root: &Path, project: &Project, php_dir: &Path, profiles: &Path) -> Option<PathBuf> {
+    if !project.needs_xdebug() && project.php_ini.is_empty() {
         return None;
     }
-    let id = ring::digest::digest(&ring::digest::SHA256, root.display().to_string().to_lowercase().as_bytes());
-    let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let dir = paths::home().join("ini").join(format!("{name}-{}", id.as_ref()[..4].iter().map(|b| format!("{b:02x}")).collect::<String>()));
+    if project.profile {
+        let _ = std::fs::create_dir_all(profiles); // Xdebug n'écrit pas dans un dossier absent
+    }
+    let dir = paths::home().join("ini").join(project_id(root));
     let file = dir.join("99-viherd.ini");
-    let content = project_ini(project, php_dir);
+    let content = project_ini(project, php_dir, profiles);
     if std::fs::read_to_string(&file).ok().as_deref() != Some(content.as_str()) {
         if let Err(e) = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(&file, &content)) {
             tracing::warn!("{}: {e}", file.display());
@@ -67,6 +78,13 @@ fn project_ini_dir(root: &Path, project: &Project, php_dir: &Path) -> Option<Pat
         }
     }
     Some(dir)
+}
+
+/// Identifiant stable d'un projet pour ses fichiers générés : <dossier>-<4 octets du hash du chemin>.
+pub fn project_id(root: &Path) -> String {
+    let id = ring::digest::digest(&ring::digest::SHA256, root.display().to_string().to_lowercase().as_bytes());
+    let name = root.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    format!("{name}-{}", id.as_ref()[..4].iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// Symfony VarDumper (donc dump()/dd() de Laravel) envoie les dumps à ce serveur TCP au lieu de les afficher.
@@ -155,12 +173,28 @@ mod tests {
         p.php_ini.insert("memory_limit".into(), "1G".into());
         p.php_ini.insert("date.timezone".into(), "Europe/Paris".into());
         p.php_ini.insert("error_log".into(), r"C:\logs\php err.log".into());
-        let ini = project_ini(&p, Path::new(r"C:\nowhere"));
+        let none = Path::new(r"C:\nowhere");
+        let ini = project_ini(&p, none, none);
         assert!(ini.contains("memory_limit=1G\r\n"));
         assert!(ini.contains("date.timezone=Europe/Paris\r\n"));
         assert!(ini.contains(r#"error_log="C:\logs\php err.log""#));
         // Xdebug demandé mais DLL absente : pas de zend_extension cassée
         p.xdebug = true;
-        assert!(!project_ini(&p, Path::new(r"C:\nowhere")).contains("zend_extension"));
+        assert!(!project_ini(&p, none, none).contains("zend_extension"));
+    }
+
+    #[test]
+    fn profiler_switches_xdebug_to_trigger_mode() {
+        let php = std::env::temp_dir().join(format!("viherd-php-{}", std::process::id()));
+        std::fs::create_dir_all(php.join("ext")).unwrap();
+        std::fs::write(php.join("ext").join("php_xdebug.dll"), b"").unwrap();
+        let p = Project { xdebug: true, profile: true, ..Default::default() };
+        let ini = project_ini(&p, &php, Path::new(r"C:\profiles\app"));
+        assert!(ini.contains("xdebug.mode=debug,develop,profile\r\n"));
+        assert!(ini.contains("xdebug.start_with_request=trigger\r\n"));
+        assert!(ini.contains(r#"xdebug.output_dir="C:\profiles\app""#));
+        let only_debug = project_ini(&Project { xdebug: true, ..Default::default() }, &php, Path::new("x"));
+        assert!(only_debug.contains("start_with_request=yes") && !only_debug.contains("output_dir"));
+        let _ = std::fs::remove_dir_all(php);
     }
 }

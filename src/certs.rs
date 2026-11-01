@@ -65,6 +65,11 @@ impl Ca {
 
     /// Certificat d'un site : `nom.test` et ses sous-domaines (`api.nom.test`).
     pub fn issue(&self, host: &str) -> Result<(Vec<u8>, Vec<u8>)> {
+        let (cert, key) = self.issue_rcgen(host)?;
+        Ok((cert.der().to_vec(), key.serialize_der()))
+    }
+
+    fn issue_rcgen(&self, host: &str) -> Result<(rcgen::Certificate, KeyPair)> {
         let mut p = CertificateParams::new(vec![host.to_string(), format!("*.{host}")])?;
         p.distinguished_name.push(DnType::CommonName, host);
         p.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
@@ -80,10 +85,56 @@ impl Ca {
         p.not_after = ymd(end);
         let key = KeyPair::generate()?;
         let cert = p.signed_by(&key, &self.cert, &self.key)?;
-        Ok((cert.der().to_vec(), key.serialize_der()))
+        Ok((cert, key))
     }
 
     pub fn der(&self) -> &[u8] { &self.der }
+}
+
+/// Certificats exportés pour les outils qui font leur propre TLS (Reverb lancé avec REVERB_TLS_CERT…).
+pub fn exports_dir() -> PathBuf { dir().join("sites") }
+
+/// Écrit `<host>.crt` (certificat + autorité) et `<host>.key` en PEM ; refait si absent ou vieux de plus de 300 jours.
+pub fn export_site(host: &str) -> Result<(PathBuf, PathBuf)> {
+    let (crt, key) = (exports_dir().join(format!("{host}.crt")), exports_dir().join(format!("{host}.key")));
+    let fresh = std::fs::metadata(&crt).and_then(|m| m.modified()).ok()
+        .and_then(|t| t.elapsed().ok()).is_some_and(|age| age.as_secs() < 300 * 86_400);
+    if !fresh || !key.exists() {
+        let ca = Ca::load_or_create()?;
+        let (cert, kp) = ca.issue_rcgen(host)?;
+        let ca_pem = std::fs::read(ca_cert_path()).ok().map(|d| pem_cert(&d)).unwrap_or_default();
+        std::fs::create_dir_all(exports_dir())?;
+        std::fs::write(&crt, format!("{}{ca_pem}", cert.pem()))?;
+        std::fs::write(&key, kp.serialize_pem())?;
+    }
+    Ok((crt, key))
+}
+
+/// Renouvelle les certificats déjà exportés avant qu'ils n'expirent (appelé au démarrage du démon).
+pub fn refresh_exports() {
+    let Ok(rd) = std::fs::read_dir(exports_dir()) else { return };
+    for e in rd.flatten() {
+        let name = e.file_name().to_string_lossy().to_string();
+        if let Some(host) = name.strip_suffix(".crt") {
+            if let Err(e) = export_site(host) {
+                tracing::warn!("certificat exporté {host} : {e:#}");
+            }
+        }
+    }
+}
+
+fn pem_cert(der: &[u8]) -> String {
+    // le certificat de l'autorité est enregistré en DER : on le ré-encode en PEM (base64 par lignes de 64)
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut b64 = String::new();
+    for c in der.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            b64.push(if i <= c.len() { A[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    let lines: Vec<&str> = b64.as_bytes().chunks(64).map(|l| std::str::from_utf8(l).unwrap()).collect();
+    format!("-----BEGIN CERTIFICATE-----\n{}\n-----END CERTIFICATE-----\n", lines.join("\n"))
 }
 
 /// Empreinte SHA-1 du certificat de l'autorité, telle que l'attend certutil.
@@ -194,5 +245,12 @@ mod tests {
         let (cert, key) = a.issue("demo.test").unwrap();
         assert!(!cert.is_empty() && !key.is_empty());
         let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[test]
+    fn pem_encodes_like_base64() {
+        assert_eq!(pem_cert(b"Man"), "-----BEGIN CERTIFICATE-----\nTWFu\n-----END CERTIFICATE-----\n");
+        assert_eq!(pem_cert(b"Ma"), "-----BEGIN CERTIFICATE-----\nTWE=\n-----END CERTIFICATE-----\n");
+        assert_eq!(pem_cert(b"M"), "-----BEGIN CERTIFICATE-----\nTQ==\n-----END CERTIFICATE-----\n");
     }
 }

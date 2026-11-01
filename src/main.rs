@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use viherd::config::{self, find_project_root, site_name, Global, Project};
-use viherd::{certs, daemon, download, env, hosts, paths, share, versions};
+use viherd::{certs, daemon, download, env, herd, hosts, paths, share, update, versions};
 
 #[derive(Parser)]
 #[command(name = "viherd", version, about = "Environnement de dev PHP/Node local (à la Herd), en Rust")]
@@ -66,6 +66,16 @@ enum Cmd {
     Status,
     /// Recharge la config dans le démon (après avoir modifié un viherd.toml)
     Reload,
+    /// Installe la dernière version de Viherd publiée sur GitHub
+    Update,
+    /// Importe la configuration de Laravel Herd (sites, HTTPS, versions de PHP, .env)
+    Herd {
+        /// Applique sans demander (sinon : affiche seulement ce qui serait fait)
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Serveur MCP sur stdio pour les assistants IA (ex : `claude mcp add viherd -- viherd mcp`)
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -89,6 +99,8 @@ async fn main() {
             tracing_subscriber::fmt().with_target(false).with_ansi(false)
                 .with_writer(std::io::stderr.and(std::sync::Mutex::new(f))).init();
         }
+        // MCP : stdout est réservé aux messages JSON-RPC
+        None if matches!(cli.cmd, Cmd::Mcp) => tracing_subscriber::fmt().with_target(false).with_ansi(false).with_writer(std::io::stderr).init(),
         None => tracing_subscriber::fmt().with_target(false).init(),
     }
     match run(cli).await {
@@ -238,7 +250,58 @@ async fn run(cli: Cli) -> Result<i32> {
             }
             println!("✔ rechargé");
         }
+        Cmd::Update => match update::check().await? {
+            None => println!("✔ Viherd v{} est à jour", viherd::VERSION),
+            Some(a) => {
+                println!("↓ Viherd v{} ({})", a.version, a.page);
+                let setup = update::download(&a).await?;
+                update::launch(&setup)?;
+                println!("✔ installeur lancé : suis les étapes dans sa fenêtre");
+            }
+        },
+        Cmd::Herd { yes } => return import_herd(yes).await,
+        Cmd::Mcp => viherd::mcp::serve().await?,
     }
+    Ok(0)
+}
+
+/// `viherd herd` : montre ce qui serait importé ; `--yes` importe tout ce qui n'est pas déjà en place.
+async fn import_herd(yes: bool) -> Result<i32> {
+    let p = herd::plan(&Global::load()?);
+    if !p.found {
+        bail!("configuration de Herd introuvable dans {}", herd::config_dir().display());
+    }
+    let todo = |l: &[herd::Entry]| l.iter().filter(|e| !e.done).map(|e| e.id.clone()).collect::<Vec<_>>();
+    let show = |title: &str, l: &[herd::Entry]| {
+        if l.is_empty() { return; }
+        println!("{title}");
+        for e in l {
+            println!("  {} {}  {}", if e.done { "✔" } else { "+" }, e.label, e.detail);
+        }
+    };
+    show("Dossiers parqués", &p.parked);
+    show("Sites liés", &p.links);
+    show("HTTPS", &p.secured);
+    show("Versions de PHP", &p.php);
+    for f in &p.env {
+        println!(".env de {}", f.site);
+        for c in &f.changes { println!("  {} : {} → {}", c.key, c.from, c.to); }
+        for w in &f.warnings { println!("  ! {w}"); }
+    }
+    if let Some((h, s)) = p.ports { println!("Ports : Viherd utilise {h}/{s}, Herd 80/443"); }
+    for n in &p.notes { println!("! {n}"); }
+    if !yes {
+        println!("\nRien n'a été modifié. Relance avec --yes pour importer (ou passe par l'interface : Machine locale → Importer depuis Herd).");
+        return Ok(0);
+    }
+    let r = herd::apply(&herd::Choice {
+        parked: todo(&p.parked), links: todo(&p.links), secured: todo(&p.secured), php: todo(&p.php),
+        env: p.env.iter().filter(|f| !f.changes.is_empty()).map(|f| f.site.clone()).collect(),
+        ports: false,
+    })?;
+    println!("✔ {} dossier(s), {} lien(s), {} site(s) HTTPS, {} version(s) de PHP, {} .env corrigé(s)", r.parked, r.links, r.secured, r.php, r.env.len());
+    for n in &r.notes { println!("! {n}"); }
+    notify_reload().await;
     Ok(0)
 }
 
@@ -252,7 +315,7 @@ async fn exec(program: &str, args: &[String], ensure_all: bool) -> Result<i32> {
     let node = project.node.clone().unwrap_or_else(|| g.default_node.clone());
     if ensure_all || matches!(program, "php" | "composer") {
         versions::ensure_php(&php).await?;
-        if project.xdebug {
+        if project.needs_xdebug() {
             versions::ensure_xdebug(&php).await?;
         }
     }

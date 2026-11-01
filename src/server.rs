@@ -37,6 +37,27 @@ pub struct State {
     pub quit: tokio::sync::Notify,
     /// Partages publics en cours : hôte du tunnel (xxx.trycloudflare.com) -> site
     pub shares: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    /// Nouvelle version de Viherd publiée sur GitHub (vérifiée en tâche de fond)
+    pub update: std::sync::Mutex<Option<crate::update::Available>>,
+}
+
+impl State {
+    pub fn new(g: Global) -> Arc<Self> {
+        Arc::new(Self {
+            global: RwLock::new(g),
+            sites: RwLock::new(BTreeMap::new()),
+            php: PhpPool::new(),
+            sup: Supervisor::default(),
+            mail: Arc::new(MailBox::default()),
+            started: std::time::Instant::now(),
+            metrics: Default::default(),
+            dumps: Arc::new(crate::dumps::DumpStore::default()),
+            paused: Default::default(),
+            quit: tokio::sync::Notify::new(),
+            shares: Default::default(),
+            update: Default::default(),
+        })
+    }
 }
 
 pub(crate) fn full(b: impl Into<Bytes>) -> Body {

@@ -55,7 +55,7 @@ impl PhpPool {
             return Ok(p.clone());
         }
         let dir = versions::ensure_php(&site.php(g)).await?;
-        if site.project.xdebug {
+        if site.project.needs_xdebug() {
             if let Err(e) = versions::ensure_xdebug(&site.php(g)).await {
                 tracing::warn!("[{}] Xdebug : {e:#}", site.name);
             }

@@ -28,9 +28,13 @@ un superviseur de workers et des services gérés, pilotés depuis une vraie app
 | **HTTPS local** | `viherd secure` : autorité de certification locale approuvée dans Windows, certificat par site généré à la volée |
 | **Partage** | `viherd share` : adresse publique `https://…trycloudflare.com` via Cloudflare Tunnel, sans compte |
 | **Xdebug & php.ini** | Xdebug activable par projet (téléchargé au besoin), réglages `php.ini` propres à chaque projet |
+| **Profilage** | `?XDEBUG_PROFILE=1` sur une page : temps total et fonctions les plus coûteuses, dans l'interface |
+| **Assistant IA** | `viherd mcp` : serveur MCP (sites, logs, dumps, files, mails, `artisan`, SQL) pour Claude Code, Cursor… |
+| **Import depuis Herd** | sites liés, HTTPS, versions de PHP par site, correction des `.env` qui pointent vers Herd |
 | **WebSockets** | proxy WebSocket vers Reverb (`/app`, `/apps`), aussi en `wss://` |
 | **Services** | MySQL (MariaDB), PostgreSQL, Redis, RustFS / MinIO (S3), Meilisearch — téléchargés au premier lancement |
-| **Explorateur de BDD** | parcourir, filtrer, éditer, insérer, supprimer, éditeur SQL, export CSV, sauvegardes / restauration intégrées |
+| **Explorateur de BDD** | parcourir, filtrer, éditer, insérer, supprimer, éditeur SQL, export CSV, sauvegardes / restauration intégrées, sauvegarde automatique quotidienne |
+| **Mises à jour** | nouvelle version détectée sur GitHub, installée en un clic (ou `viherd update`) |
 | **Dumps** | `dump()` / `dd()` capturés avec fichier et ligne, affichés en arbre dépliable (comme Herd) |
 | **Mails** | serveur SMTP local qui capture tout, avec aperçu HTML |
 | **Journal** | activité HTTP, erreurs, workers et services au même endroit |
@@ -112,6 +116,35 @@ pour Firefox, active `security.enterprise_roots.enabled` ou importe `ca.crt`. Pe
 `viherd share` télécharge `cloudflared` au premier usage et ouvre un tunnel Cloudflare « rapide »
 (sans compte). Viherd transmet `HTTPS=on` à PHP pour ces visites : Laravel génère des URL
 en `https://…trycloudflare.com` sans configuration.
+
+### Venir de Herd
+
+```powershell
+viherd herd                  # montre ce qui serait importé, sans rien modifier
+viherd herd --yes            # importe
+```
+
+Lu dans `~\.config\herd\config` : dossiers parqués, sites liés, sites en HTTPS, versions de PHP
+isolées. Les `.env` sont corrigés : `APP_URL` suit le HTTPS et le port de Viherd, et
+`REVERB_TLS_CERT` / `REVERB_TLS_KEY` pointent vers un certificat signé par l'autorité de Viherd
+(`~/.viherd/certs/sites/`, renouvelé automatiquement). L'original est copié dans `.env.viherd-backup`.
+L'interface propose le même import, élément par élément (Machine locale → Importer depuis Herd).
+
+### Assistant IA (MCP)
+
+```powershell
+claude mcp add viherd -- viherd mcp
+```
+
+L'assistant peut lister les sites, lire les logs Laravel et des workers, les dumps, les files et les
+mails, lancer `artisan` avec le PHP du projet, exécuter du SQL et redémarrer un worker.
+Pour un autre client MCP : `{ "command": "viherd", "args": ["mcp"] }`. Viherd doit tourner.
+
+### Profilage
+
+Active « Profilage » dans les réglages du site (ou `profile = true` dans `viherd.toml`), puis ajoute
+`?XDEBUG_PROFILE=1` à une adresse. L'onglet Profilage du site montre le temps total et les fonctions
+les plus coûteuses (temps propre, temps total, nombre d'appels). Les 30 derniers profils sont gardés.
 
 ## Configuration d'un projet — `viherd.toml`
 
@@ -204,6 +237,9 @@ Les binaires de PHP, Node et des services sont stockés une seule fois par versi
 | `php_processes` | `4` | php-cgi par projet (requêtes en parallèle) |
 | `tld` | `"test"` | `"localhost"` évite de toucher au fichier hosts |
 | `dumps` | `true` | capture de `dump()` / `dd()` |
+| `backups.enabled` | `false` | sauvegarde quotidienne de toutes les bases MySQL / PostgreSQL |
+| `backups.hour` | `12` | heure à partir de laquelle la sauvegarde du jour est faite |
+| `backups.keep` | `7` | sauvegardes automatiques gardées par base (les manuelles restent) |
 
 ## Développer Viherd
 
@@ -227,10 +263,13 @@ src/
  ├─ php_pool.rs     pool php-cgi par projet · fastcgi.rs
  ├─ supervisor.rs   workers et services
  ├─ services.rs     MySQL, PostgreSQL, Redis, S3, Meilisearch
- ├─ db.rs           explorateur et sauvegardes
+ ├─ db.rs           explorateur et sauvegardes · backups.rs  sauvegarde automatique
  ├─ dumps.rs        serveur de dumps · mail.rs  SMTP
- └─ versions.rs     installation de PHP / Node / Composer / Xdebug
+ ├─ herd.rs         import depuis Herd · update.rs  mises à jour (releases GitHub)
+ ├─ mcp.rs          serveur MCP · profiler.rs  résumé des profils Xdebug
+ └─ versions.rs     installation de PHP / Node / Composer / Xdebug / phpredis
 installer/          viherd-setup.exe : fenêtre WebView sans bordure, interface dans installer/src/ui.html
+tests/proxy.rs      tests d'intégration du proxy (statique, HTTPS, routes, PHP si installé)
 ```
 
 `cargo test` lance les tests unitaires ; la CI GitHub Actions les relance sous Windows à chaque push.

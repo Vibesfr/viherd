@@ -75,6 +75,7 @@ kbd { font: 500 11px var(--mono); color: var(--t2); border: 1px solid var(--line
 .issues:hover { background: var(--bg-3); }
 .issues i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
 .issues.bad i { background: var(--red); }
+.issues.upd i { background: var(--blue); }
 .tabs { display: flex; gap: 2px; padding: 0 16px; overflow-x: auto; scrollbar-width: none; }
 .tabs::-webkit-scrollbar { display: none; }
 .tab { all: unset; cursor: pointer; position: relative; height: 46px; display: inline-flex; align-items: center; padding: 0 2px; color: var(--t2); white-space: nowrap; font-size: 14px; }
@@ -404,6 +405,41 @@ table.grid .cb { width: 36px; padding-right: 0; cursor: default; }
 .bk { display: flex; align-items: center; gap: 12px; padding: 13px 16px; border-top: 1px solid var(--line); margin-top: -1px; }
 .bk > div { display: grid; gap: 2px; flex: 1; min-width: 0; }
 .bk b { font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.auto-bk { display: flex; align-items: center; gap: 12px; padding: 14px 16px; flex-wrap: wrap; font-size: 13px; color: var(--t2); }
+.auto-bk > div { display: grid; gap: 2px; flex: 1; min-width: 220px; }
+.auto-bk > div b { color: var(--t1); font-weight: 600; font-size: 14px; }
+.auto-bk select.inp, .auto-bk input.inp { height: 32px; width: auto; }
+
+/* import depuis Herd, profils, assistant IA */
+.banner { display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--bg-1); flex-wrap: wrap; }
+.banner > div { display: grid; gap: 2px; flex: 1; min-width: 220px; font-size: 13px; color: var(--t2); }
+.banner > div b { color: var(--t1); font-weight: 600; font-size: 14px; }
+.hd-row { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-top: 1px solid var(--line); margin-top: -1px; font-size: 13.5px; cursor: pointer; }
+.hd-row:hover { background: var(--bg-2); }
+.hd-row > span:not(.badge) { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.hd-row > span em { font-style: normal; color: var(--t3); font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hd-row.done { cursor: default; color: var(--t3); }
+.hd-row.done:hover { background: none; }
+.hd-ch { display: grid; grid-template-columns: minmax(120px, auto) minmax(0, 1fr); gap: 2px 12px; padding: 0 16px 12px 44px; font: 12px var(--mono); }
+.hd-ch .k { color: var(--t2); }
+.hd-ch .from { color: var(--t3); text-decoration: line-through; overflow-wrap: anywhere; }
+.hd-ch .to { color: var(--t1); overflow-wrap: anywhere; }
+.hd-ch .warn { grid-column: 1 / -1; color: var(--amber); font-family: var(--font); }
+.prof { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 860px) { .prof { grid-template-columns: minmax(0, 1fr); } }
+.prof-item { all: unset; box-sizing: border-box; cursor: pointer; display: grid; gap: 2px; width: 100%; padding: 11px 14px; border-top: 1px solid var(--line); margin-top: -1px; }
+.prof-item:hover { background: var(--bg-2); }
+.prof-item.on { background: var(--bg-3); }
+.prof-item b { font: 500 13px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prof-item span { font-size: 12px; color: var(--t3); }
+.prof-fn { display: grid; gap: 3px; min-width: 0; }
+.prof-fn > span { overflow: hidden; text-overflow: ellipsis; }
+.prof-fn em { font-style: normal; font-size: 11.5px; color: var(--t3); overflow: hidden; text-overflow: ellipsis; }
+.prof-bar { height: 3px; border-radius: 2px; background: var(--t1); opacity: .55; }
+table.grid td.num, table.grid th.num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
+.cmdline { display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--bg); font: 12.5px var(--mono); }
+.cmdline span { flex: 1; min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; user-select: text; }
+.notes-pre { white-space: pre-wrap; font-size: 13px; color: var(--t2); max-height: 260px; overflow: auto; border: 1px solid var(--line-2); border-radius: 8px; padding: 12px; background: var(--bg); }
 .bk > div span { font-size: 12.5px; color: var(--t3); font-family: var(--mono); }
 .dbstats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .dbstats > div { padding: 14px 16px; border-left: 1px solid var(--line); display: grid; gap: 2px; }
@@ -726,6 +762,7 @@ function render() {
     sites: () => a ? pSite(a, b === 'debug' ? 'logs' : b || 'overview') : pSites(),
     workers: () => pWorkers(a), db: () => { const R = route(); pDb(R[1], R[2], R[3], R[4]); },
     services: pServices, runtimes: () => pServices(true), debug: pDumps, mail: pMail, logs: () => pLogs(a || 'daemon'),
+    herd: pHerd,
   };
   (pages[r] || pOverview)();
 }
@@ -741,7 +778,7 @@ function renderHeader() {
   if (site) {
     const t = b === 'debug' ? 'logs' : b || 'overview', base = '#/sites/' + encodeURIComponent(site.name);
     const nd = (window.DUMPS || []).filter(d => siteOfPath(d.root) === site).length;
-    tabs = [['overview', 'Aperçu'], ['workers', 'Workers', site.workers.length || '', site.workers.some(jobBad) ? 'bad' : ''], ['logs', 'Logs', nd || ''], ['settings', 'Réglages']]
+    tabs = [['overview', 'Aperçu'], ['workers', 'Workers', site.workers.length || '', site.workers.some(jobBad) ? 'bad' : ''], ['logs', 'Logs', nd || ''], ...(site.profile ? [['profiles', 'Profilage']] : []), ['settings', 'Réglages']]
       .map(([k, l, n, c]) => tab(t === k, l, n, c, `${base}/${k}`)).join('');
   } else {
     const on = { overview: r === 'activity' && a !== 'journal', sites: r === 'sites', workers: r === 'workers', db: r === 'db', services: r === 'services' || r === 'runtimes', debug: r === 'debug', mail: r === 'mail', journal: (r === 'activity' && a === 'journal') || r === 'logs' };
@@ -763,6 +800,7 @@ function renderHeader() {
       ${site ? `<span class="slash">/</span><button class="scope" onclick="siteMenu(this)">${avatar(site.name, 'sm')}<span class="nm">${esc(site.name)}</span>${ic('updown', 'i ud')}</button>` : ''}
       <span class="sp"></span>
       <button class="searchbtn" onclick="openPal()" title="Rechercher  Ctrl K">${ic('search')}<span>Rechercher…</span><kbd>Ctrl K</kbd></button>
+      ${S.update ? `<button class="issues upd" onclick="dlgUpdate()" title="Nouvelle version de Viherd"><i></i><span>v${esc(S.update.version)} disponible</span></button>` : ''}
       <button class="issues ${iss.length ? 'bad' : ''}" onclick="issuesMenu(this)"><i></i><span>${iss.length ? `${iss.length} problème${iss.length > 1 ? 's' : ''}` : 'Opérationnel'}</span></button>
     </div>
     <nav class="tabs">${tabs}</nav>`;
@@ -783,6 +821,11 @@ function machineMenu(anchor) {
     S.ca_trusted ? { text: 'Certificat de l’autorité HTTPS', icon: ic('lock'), run: () => act('/api/certs/open', {}) }
       : { text: 'Approuver l’autorité HTTPS…', icon: ic('lock'), run: trustCa },
     { text: document.documentElement.dataset.theme === 'dark' ? 'Thème clair' : 'Thème sombre', icon: ic('sun'), hint: 'Shift T', run: toggleTheme },
+    { sep: 1 },
+    { text: 'Importer depuis Herd…', icon: ic('dl'), run: () => go('herd') },
+    { text: 'Connecter un assistant IA…', icon: ic('sparkle'), run: dlgMcp },
+    S.update ? { text: `Installer Viherd v${S.update.version}…`, icon: ic('refresh'), run: dlgUpdate }
+      : { text: 'Rechercher une mise à jour', icon: ic('refresh'), run: checkUpdate },
     { sep: 1 },
     { text: 'Quitter Viherd', icon: ic('power'), run: () => { if (confirm('Arrêter Viherd, ses sites, workers et services ?')) fetch('/api/quit', { method: 'POST' }); } },
   ] });
@@ -914,6 +957,8 @@ function pOverview() {
           : `<div class="calm">${dot('ok')}Rien à signaler. Les plantages, erreurs 5xx et services en panne apparaîtront ici.</div>`}</section>
     </aside>
     <section class="ov-main">
+      ${S.herd ? `<div class="banner">${ic('dl')}<div><b>Laravel Herd est installé sur cette machine</b><span>Importe ses sites liés, le HTTPS, les versions de PHP par site, et corrige les .env qui pointent encore vers Herd.</span></div>
+        <button class="b ghost" onclick="act('/api/herd/dismiss',{})">Ignorer</button><button class="b pri" onclick="go('herd')">Voir l'import</button></div>` : ''}
       ${S.sites.length ? `<div class="toolbar">
         <label class="field">${ic('search')}<input id="site-q" value="${esc(siteQ)}" placeholder="Rechercher un site…" oninput="siteQ=this.value;drawSiteList()"></label>
         <div class="seg lg icons"><button class="${siteView === 'grid' ? 'on' : ''}" title="Grille" onclick="setSiteView('grid')">${ic('grid')}</button><button class="${siteView === 'list' ? 'on' : ''}" title="Liste" onclick="setSiteView('list')">${ic('rows')}</button></div>
@@ -987,7 +1032,7 @@ let logLevel = 'all';
 function pSite(name, tab) {
   const s = siteOf(name);
   if (!s) return set(`<div class="pg"><div class="empty dash"><b>Site introuvable</b><span>« ${esc(name)} » n'existe plus.</span><div class="acts"><a class="b" href="#/sites">Voir les sites</a></div></div></div>`);
-  const body = { overview: siteOverview, workers: siteWorkers, logs: siteLogs, settings: siteSettings }[tab] || siteOverview;
+  const body = { overview: siteOverview, workers: siteWorkers, logs: siteLogs, profiles: siteProfiles, settings: siteSettings }[tab] || siteOverview;
   set(`<div class="pg" style="gap:32px">
     <div class="pg-h" style="align-items:center"><div><h1>${esc(s.name)}</h1></div>
       <div class="acts">
@@ -997,6 +1042,7 @@ function pSite(name, tab) {
         <a class="b pri" href="${esc(s.url)}" target="_blank">Visiter</a></div></div>
     ${body(s)}</div>`);
   if (tab === 'logs') loadLaravelLog(s);
+  if (tab === 'profiles') loadProfiles(s.name);
 }
 function siteOverview(s) {
   const st = siteState(s), m = s.metrics, evs = groupEvents(parseEvents().filter(e => e.site === s.name)).slice(0, 10);
@@ -1115,6 +1161,9 @@ function siteSettings(s) {
     ${s.proxy ? '' : setBlock('Xdebug', 'Débogage pas à pas : Xdebug se connecte à ton éditeur sur le port <span class="hl">9003</span> (VS Code : extension PHP Debug, « Listen for Xdebug »). Téléchargé au premier usage.',
       `<div class="st" style="gap:10px">${sw(s.xdebug, `saveSite(${J(s.name)},{xdebug:${!s.xdebug}})`, s.xdebug ? 'Désactiver' : 'Activer')}<span>${s.xdebug ? 'Activé pour PHP, les workers et le terminal' : 'Désactivé'}</span></div>`,
       'Clé <span class="hl">xdebug = true</span> dans viherd.toml')}
+    ${s.proxy ? '' : setBlock('Profilage', 'Mesure le temps passé dans chaque fonction PHP, requête par requête : ajoute <span class="hl">?XDEBUG_PROFILE=1</span> à une adresse et le profil apparaît dans l\'onglet Profilage. Avec le profilage actif, le débogage se déclenche aussi à la demande (<span class="hl">?XDEBUG_SESSION=1</span> ou l\'extension Xdebug Helper).',
+      `<div class="st" style="gap:10px">${sw(s.profile, `saveSite(${J(s.name)},{profile:${!s.profile}})`, s.profile ? 'Désactiver' : 'Activer')}<span>${s.profile ? 'Activé' : 'Désactivé'}</span></div>`,
+      'Clé <span class="hl">profile = true</span> dans viherd.toml')}
     ${s.proxy ? '' : setBlock('Réglages php.ini', 'Propres à ce projet, appliqués après le php.ini de la version de PHP.', `<div class="kvs" id="set-ini">${Object.entries(s.php_ini || {}).map(([k, v]) => kvRow(k, v, 'memory_limit', '1G')).join('')}</div><button class="b sm" style="justify-self:start" onclick="addKv('set-ini','memory_limit','1G')">${ic('plus')}Ajouter un réglage</button>`, 'Section <span class="hl">[php_ini]</span>', `saveSite(${J(s.name)},{php_ini:Object.fromEntries([...document.querySelectorAll('#set-ini .kvr')].map(r=>[...r.querySelectorAll('input')].map(i=>i.value.trim())).filter(([k])=>k))})`)}
     ${setBlock('Routes proxifiées', 'HTTP et WebSocket vers un port local, par exemple <span class="hl">/app → 8080</span> pour Reverb.', `<div class="kvs" id="set-routes">${s.routes.map(r => kvRow(r.path, r.port, '/app', '8080')).join('')}</div><button class="b sm" style="justify-self:start" onclick="addKv('set-routes','/app','8080')">${ic('plus')}Ajouter une route</button>`, 'Section <span class="hl">[[routes]]</span>', `saveSite(${J(s.name)},{routes:[...document.querySelectorAll('#set-routes .kvr')].map(r=>{const[p,q]=r.querySelectorAll('input');return{path:p.value.trim(),port:parseInt(q.value,10)}}).filter(r=>r.path&&r.port)})`)}
     ${setBlock("Variables d'environnement", 'Injectées dans PHP, les workers et le terminal de ce projet.', `<div class="kvs" id="set-env">${Object.entries(s.env || {}).map(([k, v]) => kvRow(k, v, 'APP_DEBUG', 'true')).join('')}</div><button class="b sm" style="justify-self:start" onclick="addKv('set-env','APP_DEBUG','true')">${ic('plus')}Ajouter une variable</button>`, 'Section <span class="hl">[env]</span>', `saveSite(${J(s.name)},{env:Object.fromEntries([...document.querySelectorAll('#set-env .kvr')].map(r=>[...r.querySelectorAll('input')].map(i=>i.value)).filter(([k])=>k.trim()).map(([k,v])=>[k.trim(),v]))})`)}
@@ -1760,8 +1809,13 @@ function sqlHistMenu(a) { popover(a, { width: 440, search: 'Rechercher…', item
 
 /* ---------- sauvegardes (gardées dans Viherd, téléchargeables) ---------- */
 async function dbBackups() {
-  const b = $('db-body');
-  b.innerHTML = `<div class="box"><div class="bk-new"><div><b style="font-weight:600">Créer un point de restauration</b><span>Avant une migration, un import ou un test risqué. Gardé dans <span class="hl">~/.viherd/backups/${esc(DB.svc)}/${esc(DB.db)}</span>.</span></div>
+  const b = $('db-body'), ab = S.backups;
+  b.innerHTML = `<div class="box"><div class="auto-bk">${sw(ab.enabled, `saveAutoBackup({enabled:${!ab.enabled}})`, ab.enabled ? 'Désactiver' : 'Activer')}
+      <div><b>Sauvegarde automatique</b><span>Chaque jour, toutes les bases MySQL et PostgreSQL. Les sauvegardes manuelles ne sont jamais supprimées.</span></div>
+      <label>à partir de <select class="inp" id="ab-hour" onchange="saveAutoBackup({hour:+this.value})">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === ab.hour ? 'selected' : ''}>${h} h</option>`).join('')}</select></label>
+      <label>garder <input class="inp mono" id="ab-keep" type="number" min="1" max="365" value="${ab.keep}" style="width:72px" onchange="saveAutoBackup({keep:+this.value})"> jours</label>
+      <button class="b sm" onclick="runAutoBackup()">Tout sauvegarder maintenant</button></div></div>
+    <div class="box"><div class="bk-new"><div><b style="font-weight:600">Créer un point de restauration</b><span>Avant une migration, un import ou un test risqué. Gardé dans <span class="hl">~/.viherd/backups/${esc(DB.svc)}/${esc(DB.db)}</span>.</span></div>
       <input class="inp" id="bklabel" placeholder="Nom (optionnel)" onkeydown="if(event.key==='Enter')dbBackupNow()"><button class="b pri" id="bkbtn" onclick="dbBackupNow()">Sauvegarder</button></div></div>
     <div id="bklist"><div class="box"><div class="empty">Chargement…</div></div></div>
     <a class="link" style="justify-self:start;text-decoration:none;display:inline-flex;gap:6px;align-items:center" href="${dlUrl('/api/db/dump.sql', dbQ())}" download>${ic('dl')}Télécharger un export .sql de la base actuelle</a>`;
@@ -1774,6 +1828,13 @@ async function dbBackups() {
       <a class="ib" title="Télécharger" href="${dlUrl('/api/db/backups/download', dbQ({ file: k.file }))}" download>${ic('dl')}</a>
       <button class="ib" title="Supprimer" onclick="dbBackupDel(${J(k.file)})">${ic('trash')}</button></div>`).join('')}</div>`
     : `<div class="empty dash"><b>Aucune sauvegarde</b><span>Crée un point de restauration avant de tester quelque chose de risqué.</span></div>`;
+}
+async function saveAutoBackup(patch) {
+  try { await apiPost('/api/backups/settings', patch); S.backups = { ...S.backups, ...patch }; toast('Sauvegarde automatique enregistrée'); dbBackups(); } catch (e) { toast(e.message, 'err'); }
+}
+async function runAutoBackup() {
+  const b = toast('Sauvegarde de toutes les bases…', 'busy');
+  try { const r = await apiPost('/api/backups/run', {}); toast(`${r.count} base${r.count > 1 ? 's' : ''} sauvegardée${r.count > 1 ? 's' : ''}`); dbBackups(); } catch (e) { toast(e.message, 'err', 7000); } finally { b.remove(); }
 }
 async function dbBackupNow() {
   const btn = $('bkbtn'); btn.disabled = true; const b = toast('Sauvegarde en cours…', 'busy');
@@ -2040,6 +2101,108 @@ $('pal-in').onkeydown = e => {
 /* =====================================================================
    Clavier : Ctrl K, G puis lettre, /, N, A, Shift T, J/K entre sites
    ===================================================================== */
+/* ---------- mise à jour de Viherd ---------- */
+function dlgUpdate() {
+  const u = S.update; if (!u) return checkUpdate();
+  modal(`<div class="m-b"><h3>Viherd v${esc(u.version)} est disponible</h3><p>Tu as la v${esc(S.version)}. L'installeur arrête Viherd le temps de la mise à jour ; sites, bases et réglages sont conservés.</p>
+      ${u.notes ? `<div class="notes-pre">${esc(u.notes)}</div>` : ''}</div>
+    <div class="m-f"><span>${u.page ? `<a class="link" href="${esc(u.page)}" target="_blank">Voir la release</a>` : ''}</span><button class="b ghost" onclick="closeAll()">Plus tard</button>
+      <button class="b pri" onclick="closeAll();act('/api/update/install',{},'Installeur lancé : suis ses étapes','Téléchargement de la mise à jour…')">Installer</button></div>`);
+}
+async function checkUpdate() {
+  const b = toast('Recherche d’une mise à jour…', 'busy');
+  try { const r = await apiPost('/api/update/check', {}); S.update = r.update; renderHeader(); r.update ? dlgUpdate() : toast(`Viherd v${S.version} est à jour`); }
+  catch (e) { toast(e.message, 'err', 6000); } finally { b.remove(); }
+}
+
+/* ---------- assistant IA (serveur MCP) ---------- */
+function dlgMcp() {
+  const line = (t, label) => `<div class="cmdline"><span>${esc(t)}</span><button class="ib" title="Copier" onclick="copy(${J(t)},${J(label)})">${ic('copy')}</button></div>`;
+  modal(`<div class="m-b"><h3>Connecter un assistant IA</h3>
+      <p>Viherd parle le protocole MCP : Claude Code, Cursor ou un autre assistant peut lire tes sites, les logs Laravel et des workers, les dumps, les files, les mails, lancer <span class="hl">artisan</span> avec le bon PHP et interroger tes bases.</p>
+      <p><b style="color:var(--t1);font-weight:500">Claude Code</b>, dans un terminal :</p>
+      ${line('claude mcp add viherd -- viherd mcp', 'Commande copiée')}
+      <p><b style="color:var(--t1);font-weight:500">Autres assistants</b>, dans leur fichier de configuration MCP :</p>
+      ${line('{ "mcpServers": { "viherd": { "command": "viherd", "args": ["mcp"] } } }', 'Configuration copiée')}
+      <p>La commande <span class="hl">viherd</span> doit être dans le PATH (option de l'installeur). Viherd doit tourner pendant que l'assistant l'utilise.</p></div>
+    <div class="m-f"><span></span><button class="b pri" onclick="closeAll()">Fermer</button></div>`);
+}
+
+/* ---------- import depuis Herd ---------- */
+let HERD = null;
+async function pHerd() {
+  set(`<div class="pg" style="max-width:900px"><div class="pg-h"><div><h1>Importer depuis Herd</h1><p class="lead">Lu dans <span class="hl">~\\.config\\herd\\config</span>. Rien n'est modifié tant que tu n'as pas cliqué sur Importer.</p></div></div><div id="herd-body"><div class="box"><div class="empty">Lecture de la configuration de Herd…</div></div></div></div>`);
+  try { HERD = await apiGet('/api/herd', {}); } catch (e) { $('herd-body').innerHTML = `<div class="note err">${esc(e.message)}</div>`; return; }
+  const b = $('herd-body'); if (!b) return;
+  if (!HERD.found) { b.innerHTML = `<div class="empty dash"><b>Herd n'a pas été trouvé</b><span>Aucune configuration dans ~\\.config\\herd\\config.</span></div>`; return; }
+  const group = (key, title, desc, list) => !list.length ? '' : `<section class="blk"><div class="blk-h"><h2>${title}</h2><span class="dim" style="font-size:13px">${desc}</span></div>
+    <div class="box">${list.map(e => `<label class="hd-row ${e.done ? 'done' : ''}"><input type="checkbox" data-g="${key}" value="${esc(e.id)}" ${e.done ? 'checked disabled' : 'checked'}>
+      <span><b style="font-weight:500">${esc(e.label)}</b><em>${esc(e.detail)}</em></span>${e.done ? '<span class="badge">déjà en place</span>' : ''}</label>`).join('')}</div></section>`;
+  const env = !HERD.env.length ? '' : `<section class="blk"><div class="blk-h"><h2>Fichiers .env</h2><span class="dim" style="font-size:13px">copie de l'original dans .env.viherd-backup</span></div>
+    <div class="box">${HERD.env.map(f => `<label class="hd-row ${f.changes.length ? '' : 'done'}"><input type="checkbox" data-g="env" value="${esc(f.site)}" ${f.changes.length ? 'checked' : 'disabled'}>
+      <span><b style="font-weight:500">${esc(f.site)}</b><em>${esc(f.file)}</em></span></label>
+      <div class="hd-ch">${f.changes.map(c => `<span class="k">${esc(c.key)}</span><span><span class="from">${esc(c.from)}</span><br><span class="to">${esc(c.to)}</span></span>`).join('')}
+        ${f.warnings.map(w => `<span class="warn">${esc(w)} : à vérifier à la main</span>`).join('')}</div>`).join('')}</div></section>`;
+  const ports = HERD.ports ? `<section class="blk"><h2>Ports</h2><div class="box"><label class="hd-row"><input type="checkbox" id="herd-ports">
+      <span><b style="font-weight:500">Utiliser les ports 80 et 443</b><em>Viherd utilise aujourd'hui ${HERD.ports[0]} et ${HERD.ports[1]}. Herd doit être quitté, puis Viherd redémarré.</em></span></label></div></section>` : '';
+  b.innerHTML = `<div style="display:grid;gap:28px">
+    ${group('parked', 'Dossiers parqués', 'chaque sous-dossier devient un site', HERD.parked)}
+    ${group('links', 'Sites liés', 'dossiers servis sans être déplacés', HERD.links)}
+    ${group('secured', 'HTTPS', 'certificats signés par l’autorité de Viherd', HERD.secured)}
+    ${group('php', 'Versions de PHP', 'écrites dans le viherd.toml du projet', HERD.php)}
+    ${env}${ports}
+    ${HERD.notes.map(n => `<div class="note">${ic('info')}${esc(n)}</div>`).join('')}
+    <div class="acts"><button class="b pri" onclick="herdImport()">Importer la sélection</button><button class="b ghost" onclick="act('/api/herd/dismiss',{},'Proposition d’import masquée').then(()=>go('activity'))">Ne plus proposer</button></div></div>`;
+}
+async function herdImport() {
+  const pick = g => [...document.querySelectorAll(`#herd-body input[data-g="${g}"]:checked:not(:disabled)`)].map(i => i.value);
+  const body = { parked: pick('parked'), links: pick('links'), secured: pick('secured'), php: pick('php'), env: pick('env'), ports: !!$('herd-ports')?.checked };
+  const b = toast('Import en cours…', 'busy');
+  try {
+    const r = await apiPost('/api/herd/import', body);
+    toast(`Importé : ${r.links} lien(s), ${r.secured} site(s) HTTPS, ${r.php} version(s) de PHP, ${r.env.length} .env`, 'ok', 6000);
+    r.notes.forEach(n => toast(n, 'ok', 9000));
+    await refresh(true); go('sites');
+  } catch (e) { toast(e.message, 'err', 8000); } finally { b.remove(); }
+}
+
+/* ---------- profilage (Xdebug profiler) ---------- */
+let PROF = { site: null, list: [], sel: null, data: null };
+function siteProfiles(s) {
+  const url = s.url.replace(/\/$/, '') + '/?XDEBUG_PROFILE=1';
+  return `<div style="display:grid;gap:16px">
+    <div class="banner">${ic('bolt')}<div><b>Profiler une page</b><span>Ajoute <span class="hl">?XDEBUG_PROFILE=1</span> à n'importe quelle adresse du site : la requête est enregistrée ici.</span></div>
+      <a class="b" href="${esc(url)}" target="_blank">${ic('ext')}Profiler l'accueil</a><button class="b ghost" onclick="loadProfiles(${J(s.name)})">${ic('refresh')}Actualiser</button>
+      <button class="b ghost" onclick="clearProfiles(${J(s.name)})">${ic('trash')}Tout supprimer</button></div>
+    <div class="prof"><div class="box" id="prof-list"><div class="empty">Chargement…</div></div><div id="prof-detail"></div></div></div>`;
+}
+async function loadProfiles(site) {
+  try { PROF.list = await apiGet('/api/site/profiles', { site }); } catch (e) { $('prof-list').innerHTML = `<div class="note err">${esc(e.message)}</div>`; return; }
+  PROF.site = site;
+  const box = $('prof-list'); if (!box) return;
+  box.innerHTML = PROF.list.length ? PROF.list.map(p => `<button class="prof-item ${p.file === PROF.sel ? 'on' : ''}" onclick="showProfile(${J(p.file)})"><b>${esc(p.request)}</b><span>${ago(p.created)} · ${fmtSize(p.size)}</span></button>`).join('')
+    : `<div class="empty"><b>Aucun profil</b><span>Ouvre une page avec ?XDEBUG_PROFILE=1.</span></div>`;
+  if (PROF.list.length && !PROF.list.some(p => p.file === PROF.sel)) showProfile(PROF.list[0].file);
+  else if (PROF.sel) drawProfile();
+}
+async function showProfile(file) {
+  PROF.sel = file;
+  document.querySelectorAll('.prof-item').forEach(b => b.classList.toggle('on', b.getAttribute('onclick').includes(JSON.stringify(file))));
+  try { PROF.data = await apiGet('/api/site/profile', { site: PROF.site, file }); drawProfile(); } catch (e) { $('prof-detail').innerHTML = `<div class="note err">${esc(e.message)}</div>`; }
+}
+function drawProfile() {
+  const d = PROF.data, box = $('prof-detail'); if (!d || !box) return;
+  const max = Math.max(...d.functions.map(f => f.self_ms), 0.001), ms = v => v < 1 ? v.toFixed(2) : v < 100 ? v.toFixed(1) : Math.round(v);
+  box.innerHTML = `<div class="box"><div class="box-h" style="display:flex;gap:16px"><span class="mono" style="color:var(--t1)">${esc(d.request)}</span><span class="sp"></span><span>Total <b class="mono" style="color:var(--t1)">${ms(d.total_ms)} ms</b></span></div>
+    <div style="overflow-x:auto"><table class="grid"><thead><tr><th>Fonction</th><th class="num">Appels</th><th class="num">Propre (ms)</th><th class="num">Total (ms)</th></tr></thead>
+    <tbody>${d.functions.map(f => `<tr><td style="width:100%;max-width:0"><div class="prof-fn"><span class="mono">${esc(f.name)}</span>${f.file && !f.file.startsWith('php:') ? `<em>${esc(f.file)}</em>` : ''}<i class="prof-bar" style="width:${Math.max(2, f.self_ms / max * 100)}%"></i></div></td>
+      <td class="num">${f.calls}</td><td class="num">${ms(f.self_ms)}</td><td class="num">${ms(f.incl_ms)}</td></tr>`).join('')}</tbody></table></div></div>`;
+}
+async function clearProfiles(site) {
+  if (!confirm('Supprimer tous les profils de ce site ?')) return;
+  try { await apiPost('/api/site/profiles/clear', { site }); PROF.sel = null; PROF.data = null; $('prof-detail').innerHTML = ''; loadProfiles(site); } catch (e) { toast(e.message, 'err'); }
+}
+
 let gPending = 0;
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); return $('pal').classList.contains('open') ? closeAll() : openPal(); }
@@ -2075,7 +2238,7 @@ async function refresh(force) {
     if (!busy) renderHeader();
     if ($('sheet').classList.contains('open')) { if (s !== sig && sheetSvc) { sig = s; drawSheet(); } }
     else if (r === 'activity' && a === 'journal' && !force) { sig = s; journalTick(); }
-    else if (r === 'db' && !force) { sig = s; }
+    else if ((r === 'db' || r === 'herd') && !force) { sig = s; }
     else if (r === 'mail' && !force) { if (s !== sig) { sig = s; if (!busy) loadMails(); } }
     else if (force || (s !== sig && !busy)) { sig = s; const keep = $('main').scrollTop; render(); $('main').scrollTop = keep; }
   } catch {

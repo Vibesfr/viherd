@@ -2,7 +2,7 @@
 use crate::config::{Global, Project};
 use crate::server::{full, json, pct_decode, Body, State};
 use crate::redis::Reply;
-use crate::{certs, daemon, db, env, hosts, paths, services, share, supervisor, versions};
+use crate::{certs, daemon, db, env, herd, hosts, paths, services, share, supervisor, update, versions};
 use anyhow::{anyhow, bail, Result};
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
@@ -170,7 +170,7 @@ async fn route(req: Request<Incoming>, st: &Arc<State>) -> Result<Response<Body>
             let mut cur = serde_json::to_value(Project::load(&site.path)?)?;
             if let (Some(obj), Some(patch)) = (cur.as_object_mut(), body.get("patch").and_then(|p| p.as_object())) {
                 for (k, v) in patch {
-                    if ["workers", "routes", "env", "proxy", "root", "xdebug", "php_ini"].contains(&k.as_str()) {
+                    if ["workers", "routes", "env", "proxy", "root", "xdebug", "profile", "php_ini"].contains(&k.as_str()) {
                         obj.insert(k.clone(), v.clone());
                     }
                 }
@@ -181,7 +181,7 @@ async fn route(req: Request<Incoming>, st: &Arc<State>) -> Result<Response<Body>
                 if w.name.trim().is_empty() || w.command.trim().is_empty() { bail!("chaque worker doit avoir un nom et une commande"); }
                 if !names.insert(w.name.clone()) { bail!("deux workers s'appellent « {} »", w.name); }
             }
-            if p.xdebug {
+            if p.needs_xdebug() {
                 let php = site.php(&st.global.read().unwrap());
                 versions::ensure_xdebug(&php).await?;
             }
@@ -441,6 +441,61 @@ async fn route(req: Request<Incoming>, st: &Arc<State>) -> Result<Response<Body>
         ("POST", "/api/hosts") => {
             let n = hosts::sync(&Global::load()?)?;
             json(j!({ "ok": true, "count": n }))
+        }
+
+        // ---------- mise à jour de Viherd ----------
+        ("POST", "/api/update/check") => {
+            let a = update::check().await?;
+            *st.update.lock().unwrap() = a.clone();
+            json(j!({ "update": a }))
+        }
+        ("POST", "/api/update/install") => {
+            let a = st.update.lock().unwrap().clone().ok_or_else(|| anyhow!("aucune mise à jour disponible"))?;
+            let setup = update::download(&a).await?;
+            update::launch(&setup)?;
+            ok()
+        }
+
+        // ---------- sauvegardes automatiques des bases ----------
+        ("POST", "/api/backups/settings") => {
+            let mut g = Global::load()?;
+            if let Some(b) = body.get("enabled").and_then(|v| v.as_bool()) { g.backups.enabled = b; }
+            if let Some(h) = body.get("hour").and_then(|v| v.as_u64()) { g.backups.hour = h.min(23) as u8; }
+            if let Some(k) = body.get("keep").and_then(|v| v.as_u64()) { g.backups.keep = k.clamp(1, 365) as usize; }
+            g.save()?;
+            st.global.write().unwrap().backups = g.backups.clone();
+            ok()
+        }
+        ("POST", "/api/backups/run") => {
+            let keep = st.global.read().unwrap().backups.keep;
+            json(j!({ "ok": true, "count": crate::backups::run_once(st, keep).await }))
+        }
+
+        // ---------- import depuis Herd ----------
+        ("GET", "/api/herd") => json(serde_json::to_value(herd::plan(&Global::load()?))?),
+        ("POST", "/api/herd/import") => {
+            let pick = |k: &str| body.get(k).and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect::<Vec<_>>()).unwrap_or_default();
+            let report = herd::apply(&herd::Choice {
+                parked: pick("parked"), links: pick("links"), secured: pick("secured"), php: pick("php"), env: pick("env"),
+                ports: body.get("ports").and_then(|v| v.as_bool()).unwrap_or(false),
+            })?;
+            daemon::reload(st).await?;
+            json(serde_json::to_value(report)?)
+        }
+        ("POST", "/api/herd/dismiss") => {
+            let mut g = Global::load()?;
+            g.herd_imported = true;
+            g.save()?;
+            st.global.write().unwrap().herd_imported = true;
+            ok()
+        }
+
+        // ---------- profilage (Xdebug profiler) ----------
+        ("GET", "/api/site/profiles") => json(j!(crate::profiler::list(&site_of(st, &q("site"))?.path)?)),
+        ("GET", "/api/site/profile") => json(crate::profiler::summary(&site_of(st, &q("site"))?.path, &q("file"))?),
+        ("POST", "/api/site/profiles/clear") => {
+            crate::profiler::clear(&site_of(st, &s("site"))?.path)?;
+            ok()
         }
         _ => Err(anyhow!("route inconnue: {method} {path}")),
     }
@@ -716,6 +771,7 @@ fn state(st: &State) -> Result<Response<Body>> {
             "secure": g.secured.contains(&s.name),
             "share": share_v,
             "xdebug": s.project.xdebug,
+            "profile": s.project.profile,
             "php_ini": s.project.php_ini,
             "path": s.path.display().to_string(),
             "docroot": s.docroot().display().to_string(),
@@ -769,5 +825,9 @@ fn state(st: &State) -> Result<Response<Body>> {
             "composer": paths::composer_dir().join("composer.phar").exists(),
         },
         "mails": st.mail.list().len(),
+        "update": st.update.lock().unwrap().clone(),
+        "backups": g.backups,
+        // proposer l'import tant qu'il n'a pas été fait ou écarté
+        "herd": !g.herd_imported && herd::config_dir().is_dir(),
     }))
 }

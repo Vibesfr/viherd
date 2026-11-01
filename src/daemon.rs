@@ -1,15 +1,14 @@
 //! Le démon : un seul processus Rust qui orchestre tout.
 use crate::config::{self, Global, Site, Worker};
-use crate::dumps::{self, DumpStore};
-use crate::mail::{self, MailBox};
-use crate::php_pool::PhpPool;
+use crate::dumps;
+use crate::mail;
 use crate::server::{self, State};
-use crate::supervisor::{Job, Supervisor};
+use crate::supervisor::Job;
 use crate::{env, services, versions};
 use anyhow::{anyhow, Result};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::net::SocketAddr;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::Arc;
 
 /// Mode CLI : tourne jusqu'à Ctrl+C.
 pub async fn run() -> Result<()> {
@@ -23,19 +22,7 @@ pub async fn run() -> Result<()> {
 /// Tourne jusqu'à ce que `shutdown` se termine (utilisé par l'appli de bureau).
 pub async fn run_until(shutdown: impl std::future::Future<Output = ()>) -> Result<()> {
     let g = Global::load()?;
-    let st = Arc::new(State {
-        global: RwLock::new(g.clone()),
-        sites: RwLock::new(BTreeMap::new()),
-        php: PhpPool::new(),
-        sup: Supervisor::default(),
-        mail: Arc::new(MailBox::default()),
-        started: std::time::Instant::now(),
-        metrics: Default::default(),
-        dumps: Arc::new(DumpStore::default()),
-        paused: Mutex::new(HashSet::new()),
-        quit: tokio::sync::Notify::new(),
-        shares: Mutex::new(Default::default()),
-    });
+    let st = State::new(g.clone());
     let smtp_task = tokio::spawn(mail::serve(g.smtp_port, st.mail.clone()));
     let dump_task = tokio::spawn({
         let store = st.dumps.clone();
@@ -64,11 +51,14 @@ pub async fn run_until(shutdown: impl std::future::Future<Output = ()>) -> Resul
     // ne doivent pas retarder l'ouverture des ports ni de l'interface.
     let bg = st.clone();
     tokio::spawn(async move {
+        // certificats donnés à Reverb & co : renouvelés avant expiration
+        let _ = tokio::task::spawn_blocking(crate::certs::refresh_exports).await;
         services::start_all(&Global::load().unwrap_or_default(), &bg.sup).await;
         if let Err(e) = reload(&bg).await {
             tracing::error!("chargement des sites: {e:#}");
         }
     });
+    let bg_tasks = [tokio::spawn(check_updates(st.clone())), tokio::spawn(crate::backups::run(st.clone()))];
     let result = tokio::select! {
         r = server::serve(http, st.clone(), false) => r,
         _ = shutdown => Ok(()),
@@ -78,11 +68,29 @@ pub async fn run_until(shutdown: impl std::future::Future<Output = ()>) -> Resul
     https_task.abort();
     smtp_task.abort();
     dump_task.abort();
+    bg_tasks.iter().for_each(|t| t.abort());
     st.sup.stop_all();
     st.php.stop_all().await;
     // laisse aux bases de données le temps de s'arrêter proprement
     st.sup.wait_idle(std::time::Duration::from_secs(20)).await;
     result
+}
+
+/// Nouvelle version sur GitHub : au démarrage (après une minute) puis toutes les 6 h. Silencieux hors ligne.
+async fn check_updates(st: Arc<State>) {
+    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+    loop {
+        match crate::update::check().await {
+            Ok(a) => {
+                if let Some(a) = &a {
+                    tracing::info!("Viherd v{} est disponible", a.version);
+                }
+                *st.update.lock().unwrap() = a;
+            }
+            Err(e) => tracing::debug!("vérification des mises à jour : {e:#}"),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(6 * 3600)).await;
+    }
 }
 
 pub fn worker_key(site: &str, worker: &str) -> String {
@@ -140,7 +148,7 @@ pub async fn reload(st: &State) -> Result<()> {
         if let Err(e) = versions::ensure_php(&s.php(&g)).await {
             tracing::error!("{}: {e:#}", s.name);
         }
-        if s.project.xdebug {
+        if s.project.needs_xdebug() {
             if let Err(e) = versions::ensure_xdebug(&s.php(&g)).await {
                 tracing::warn!("{}: Xdebug : {e:#}", s.name);
             }

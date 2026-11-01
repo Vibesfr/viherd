@@ -34,6 +34,24 @@ pub struct Global {
     /// Intercepter dump()/dd() (Symfony VarDumper) et les afficher dans Viherd
     pub dumps: bool,
     pub dump_port: u16,
+    /// Sauvegarde quotidienne de toutes les bases MySQL / PostgreSQL
+    pub backups: AutoBackups,
+    /// Import depuis Herd déjà fait (ou proposition écartée)
+    pub herd_imported: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AutoBackups {
+    pub enabled: bool,
+    /// Heure de la journée (0-23) à partir de laquelle la sauvegarde du jour est faite
+    pub hour: u8,
+    /// Nombre de sauvegardes automatiques gardées par base
+    pub keep: usize,
+}
+
+impl Default for AutoBackups {
+    fn default() -> Self { Self { enabled: false, hour: 12, keep: 7 } }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +111,8 @@ impl Default for Global {
             services,
             dumps: true,
             dump_port: 9912,
+            backups: AutoBackups::default(),
+            herd_imported: false,
         }
     }
 }
@@ -166,6 +186,9 @@ pub struct Project {
     /// Active Xdebug (mode debug, port 9003) pour PHP, les workers et le terminal du projet
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub xdebug: bool,
+    /// Profiler d'Xdebug, déclenché par requête avec ?XDEBUG_PROFILE=1
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub profile: bool,
     /// Préfixes proxifiés (HTTP + WebSocket), ex: /app -> Reverb sur 8080
     pub routes: Vec<Route>,
     pub workers: Vec<Worker>,
@@ -191,6 +214,9 @@ pub struct Worker {
 fn yes() -> bool { true }
 
 impl Project {
+    /// Xdebug doit être chargé (débogage ou profilage)
+    pub fn needs_xdebug(&self) -> bool { self.xdebug || self.profile }
+
     pub fn load(dir: &Path) -> Result<Self> {
         let p = dir.join(PROJECT_FILE);
         if !p.exists() {
