@@ -338,7 +338,22 @@ pre.code i { color: var(--t3); font-style: normal; }
 /* =====================================================================
    Bases de données
    ===================================================================== */
-.db-side { flex: 0 1 220px; min-width: 200px; display: grid; gap: 22px; align-content: start; }
+.db-side { flex: 0 1 250px; min-width: 210px; display: grid; gap: 22px; align-content: start; position: sticky; top: 0; max-height: calc(100vh - 150px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+@media (max-width: 700px) { .db-side { position: static; max-height: none; flex-basis: 100%; } }
+/* tables de la base ouverte, dans la colonne de gauche */
+.db-tables { display: grid; gap: 1px; margin: 2px 0 6px 17px; padding-left: 8px; border-left: 1px solid var(--line-2); min-width: 0; }
+.db-tables .field { height: 30px; margin: 2px 0 6px; font-size: 12.5px; }
+.tl-i { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 8px; height: 28px; padding: 0 8px; border-radius: 6px; font: 12.5px var(--mono); color: var(--t2); min-width: 0; }
+.tl-i:hover { background: var(--bg-3); color: var(--t1); }
+.tl-i.on { background: var(--bg-3); color: var(--t1); font-weight: 500; }
+.tl-i.dim0 { color: var(--t3); }
+.tl-i .n { margin-left: auto; flex: none; font-size: 11px; color: var(--t3); font-variant-numeric: tabular-nums; }
+.tl-g { all: unset; box-sizing: border-box; cursor: pointer; display: flex; align-items: center; gap: 6px; height: 28px; margin-top: 6px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: var(--t3); }
+.tl-g:hover { color: var(--t1); }
+.tl-g svg { width: 12px; height: 12px; transition: transform .15s; }
+.tl-g.open svg { transform: rotate(90deg); }
+.tl-g .n { margin-left: auto; font: 11px var(--mono); }
+.tl-empty { padding: 4px 8px; font-size: 12.5px; color: var(--t3); }
 .db-main { flex: 1 1 360px; min-width: 0; display: grid; gap: 16px; align-content: start; }
 .db-eng { display: grid; gap: 2px; }
 .db-eng-h { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--t3); padding: 0 10px 6px; }
@@ -1532,14 +1547,16 @@ async function pDb(svc, db, table, view) {
     const guess = [DB.db, last].find(d => d && list.includes(d)) || list.find(d => names.has(d)) || list.find(d => !['postgres', 'information_schema', 'mysql', 'performance_schema', 'sys'].includes(d)) || list[0];
     if (guess) return go('db', DB.svc, guess);
   }
-  if ((db || null) !== DB.db) Object.assign(DB, { db: db || null, tables: [], table: null, backups: null, result: null, sqlText: null });
+  if ((db || null) !== DB.db) Object.assign(DB, { db: db || null, tables: [], table: null, backups: null, result: null, sqlText: null, tq: '' });
   if (DB.db) try { localStorage.setItem('db:' + DB.svc, DB.db); } catch {}
   if ((table || null) !== DB.table) Object.assign(DB, { table: table || null, cols: [], data: null, page: 0, order: '', desc: false, filters: [], whereRaw: '', filterOpen: false, sel: new Set() });
   DB.view = ['sql', 'backups'].includes(view) ? view : DB.table ? (view === 'structure' ? 'structure' : 'data') : 'overview';
+  const sideScroll = document.querySelector('.db-side')?.scrollTop || 0;
   set(`<div class="pg cols">
     <aside class="db-side"><h1>Bases</h1><div id="db-tree" style="display:grid;gap:22px"></div></aside>
     <section class="db-main" id="db-main"></section></div>`);
   drawDbTree();
+  document.querySelector('.db-side').scrollTop = sideScroll;
   avail.filter(s => s.running).forEach(s => { if (!DB.dbsBy[s.name]) loadDbList(s.name).then(drawDbTree); });
   const m = $('db-main');
   if (!cur?.running) {
@@ -1549,8 +1566,10 @@ async function pDb(svc, db, table, view) {
   try {
     if (!DB.tables.length) DB.tables = await apiGet('/api/db/tables', dbQ());
     if (!$('db-main')) return;
-    m.innerHTML = `${dbHead()}<div id="db-tabs"></div><div id="db-body" style="display:grid;gap:16px"></div>`;
-    drawPills();
+    m.innerHTML = `${dbHead()}<div id="db-body" style="display:grid;gap:16px"></div>`;
+    drawDbTree();
+    document.querySelector('.db-side').scrollTop = sideScroll;
+    drawPills(true); // recentre la table ouverte si elle est hors de vue
     ({ overview: dbOverview, data: dbTable, structure: dbTable, sql: dbSql, backups: dbBackups })[DB.view]();
   } catch (e) { m.innerHTML = `<div class="note err">${esc(e.message)}</div><button class="b" style="justify-self:start" onclick="DB.dbsBy={};DB.tables=[];render()">${ic('refresh')}Réessayer</button>`; }
 }
@@ -1558,9 +1577,11 @@ function drawDbTree() {
   const el = $('db-tree'); if (!el) return;
   el.innerHTML = dbSvcs().map(s => `<div class="db-eng">
     <span class="db-eng-h">${dot(s.running ? 'ok' : '')}${dbLabel(s.name)}<span class="mono">:${s.port}</span></span>
-    ${s.running ? (DB.dbsBy[s.name] ? DB.dbsBy[s.name].map(d => `<a class="db-item ${s.name === DB.svc && d === DB.db ? 'on' : ''}" href="#/db/${s.name}/${encodeURIComponent(d)}">${ic('db')}<span class="ell">${esc(d)}</span>${s.name === DB.svc && d === DB.db && DB.tables.length ? `<span class="n">${DB.tables.length}</span>` : ''}</a>`).join('') : '<span class="db-item add">Chargement…</span>')
+    ${s.running ? (DB.dbsBy[s.name] ? DB.dbsBy[s.name].map(d => { const cur = s.name === DB.svc && d === DB.db;
+        return `<a class="db-item ${cur ? 'on' : ''}" href="#/db/${s.name}/${encodeURIComponent(d)}">${ic('db')}<span class="ell">${esc(d)}</span>${cur && DB.tables.length ? `<span class="n">${DB.tables.length}</span>` : ''}</a>${cur ? '<div class="db-tables" id="db-tabs"></div>' : ''}`; }).join('') : '<span class="db-item add">Chargement…</span>')
       + `<button class="db-item add" onclick="dbCreate('${s.name}')">${ic('plus')}Nouvelle base</button>`
       : `<button class="db-item add" onclick="toggleSvc('${s.name}',true)">${ic('play')}Démarrer</button>`}</div>`).join('');
+  drawPills();
 }
 function dbHead() {
   const rows = DB.tables.reduce((a, t) => a + (t.rows || 0), 0), size = DB.tables.reduce((a, t) => a + (t.size || 0), 0);
@@ -1573,17 +1594,23 @@ function dbHead() {
       return `<a class="${DB.view === k ? 'on' : ''}" ${dis ? 'style="opacity:.4;pointer-events:none"' : ''} href="${href}">${l}</a>`; }).join('')}</div></div>`;
 }
 const firstTable = () => (DB.tables.find(t => !LARA_SYS.test(t.name)) || DB.tables[0])?.name;
-function drawPills() {
+function drawPills(center) {
   const el = $('db-tabs'); if (!el || !DB.tables.length) return;
   const app = DB.tables.filter(t => !LARA_SYS.test(t.name)).sort((a, b) => a.name.localeCompare(b.name)), sys = DB.tables.filter(t => LARA_SYS.test(t.name)).sort((a, b) => a.name.localeCompare(b.name));
-  const showSys = sysOpen || sys.some(t => t.name === DB.table);
-  const many = DB.tables.length > 14, q = DB.tq.toLowerCase();
-  const pill = t => (!q || t.name.toLowerCase().includes(q)) ? `<a class="pill ${t.name === DB.table ? 'on' : ''} ${t.rows ? '' : 'dim0'}" href="${dbHref(t.name, DB.view === 'structure' ? 'structure' : '')}" title="${fmtNum(t.rows)} lignes · ${t.columns ?? '?'} colonnes · ${fmtSize(t.size)}">${esc(t.name)}<small>${compact(t.rows) || '0'}</small></a>` : '';
-  el.innerHTML = `<div class="db-top"><div class="pills">
-    ${many ? `<label class="field sm" style="width:180px;height:32px;border-radius:99px">${ic('search')}<input placeholder="Table…" value="${esc(DB.tq)}" oninput="DB.tq=this.value;drawPills();const i=document.querySelector('#db-tabs input');i.focus();i.setSelectionRange(i.value.length,i.value.length)"></label>` : ''}
-    ${app.map(pill).join('') || '<span class="dim" style="font-size:13px;align-self:center">Pas encore de table métier.</span>'}
-    ${sys.length ? `<button class="pill grp" onclick="sysOpen=!sysOpen;try{localStorage.setItem('dbSysOpen',sysOpen?'1':'0')}catch{};drawPills()" title="Tables techniques de Laravel">${showSys || q ? '−' : '+'} Laravel<small>${sys.length}</small></button>${showSys || q ? sys.map(pill).join('') : ''}` : ''}
-  </div></div>`;
+  const q = DB.tq.toLowerCase(), match = t => !q || t.name.toLowerCase().includes(q);
+  const showSys = sysOpen || q || sys.some(t => t.name === DB.table);
+  const item = t => `<a class="tl-i ${t.name === DB.table ? 'on' : ''} ${t.rows ? '' : 'dim0'}" href="${dbHref(t.name, DB.view === 'structure' ? 'structure' : '')}" title="${esc(t.name)} · ${fmtNum(t.rows)} lignes · ${t.columns ?? '?'} colonnes · ${fmtSize(t.size)}"><span class="ell">${esc(t.name)}</span><span class="n">${compact(t.rows) || '0'}</span></a>`;
+  const appM = app.filter(match), sysM = sys.filter(match);
+  // garder l'input (et son curseur) pendant la frappe : on ne redessine que la liste
+  if (!$('tl-list')) el.innerHTML = `${DB.tables.length > 8 ? `<label class="field sm">${ic('search')}<input id="tl-q" placeholder="Filtrer les tables" value="${esc(DB.tq)}" oninput="DB.tq=this.value;drawPills()" onkeydown="if(event.key==='Enter'){const a=document.querySelector('#tl-list .tl-i');if(a)location.hash=a.getAttribute('href')}"></label>` : ''}<div id="tl-list" style="display:grid;gap:1px"></div>`;
+  $('tl-list').innerHTML = (appM.map(item).join('') || `<span class="tl-empty">${q ? 'Aucune table' : 'Pas encore de table métier'}</span>`)
+    + (sysM.length ? `<button class="tl-g ${showSys ? 'open' : ''}" onclick="sysOpen=!sysOpen;try{localStorage.setItem('dbSysOpen',sysOpen?'1':'0')}catch{};drawPills()" title="Tables techniques de Laravel : migrations, jobs, cache, sessions…">${ic('chev')}Tables Laravel<span class="n">${sysM.length}</span></button>${showSys ? sysM.map(item).join('') : ''}` : '');
+  // table ouverte hors de la partie visible de la colonne : on fait défiler la colonne seule
+  const side = el.closest('.db-side'), on = $('tl-list').querySelector('.tl-i.on');
+  if (center && side && on && getComputedStyle(side).position === 'sticky') {
+    const r = on.getBoundingClientRect(), b = side.getBoundingClientRect();
+    if (r.top < b.top || r.bottom > b.bottom) side.scrollTop += r.top - b.top - b.height / 3;
+  }
 }
 function dbCreate(svc) {
   modal(`<div class="m-b"><h3>Nouvelle base · ${dbLabel(svc)}</h3><p>Le nom doit correspondre à <span class="hl">DB_DATABASE</span> dans le .env du projet.</p>
